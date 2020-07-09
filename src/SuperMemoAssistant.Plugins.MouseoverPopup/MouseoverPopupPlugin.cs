@@ -31,13 +31,22 @@
 
 namespace SuperMemoAssistant.Plugins.MouseoverPopup
 {
+  using System;
   using System.Collections.Generic;
   using System.Diagnostics.CodeAnalysis;
   using System.Linq;
+  using System.Text.RegularExpressions;
+  using System.Threading;
+  using System.Windows;
+  using Anotar.Serilog;
   using global::MouseoverPopup.Interop;
+  using mshtml;
+  using SuperMemoAssistant.Extensions;
   using SuperMemoAssistant.Interop.Plugins;
   using SuperMemoAssistant.Plugins.MouseoverPopup.Models;
+  using SuperMemoAssistant.Plugins.MouseoverPopup.UI;
   using SuperMemoAssistant.Services.Sentry;
+  using SuperMemoAssistant.Sys.Remoting;
 
   // ReSharper disable once UnusedMember.Global
   // ReSharper disable once ClassNeverInstantiated.Global
@@ -51,7 +60,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     #endregion
 
-
     #region Properties Impl - Public
 
     /// <inheritdoc />
@@ -61,22 +69,75 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     public override bool HasSettings => false;
     private Dictionary<string, ContentProviderInfo> providers { get; set; } = new Dictionary<string, ContentProviderInfo>();
     private MouseoverService _mouseoverSvc { get; set; }
+    private HTMLControlEvents htmlDocEvents { get; set; }
+    private PopupWdw CurrentWdw { get; set; }
 
     #endregion
-
 
     #region Methods Impl
 
     /// <inheritdoc />
     protected override void PluginInit()
     {
-
       _mouseoverSvc = new MouseoverService();
       PublishService<IMouseoverSvc, MouseoverService>(_mouseoverSvc);
+      SubscribeToMouseoverEvents();
+    }
+
+    private void SubscribeToMouseoverEvents()
+    {
+      var events = new List<EventInitOptions>
+      {
+        new EventInitOptions(EventType.onmouseenter, _ => true, x => ((IHTMLElement)x).tagName.ToLower() == "a")
+      };
+
+      htmlDocEvents = new HTMLControlEvents(events);
+      htmlDocEvents.OnMouseEnterEvent += HtmlDocEvents_OnMouseEnterEvent;
+    }
+
+    private void HtmlDocEvents_OnMouseEnterEvent(object sender, IHTMLControlEventArgs e)
+    {
+      var link = e.EventObj.srcElement as IHTMLLinkElement;
+      string url = link?.href;
+      
+      
+      foreach (var keyValuePair in providers)
+      {
+        var regexes = keyValuePair.Value.urlRegexes;
+        var provider = keyValuePair.Value.provider;
+
+        if (regexes.Any(r => new Regex(r).Match(url).Success))
+        {
+          RemoteCancellationTokenSource ct = new RemoteCancellationTokenSource();
+          SubscribeToMouseLeaveEvent(link, ct);
+          OpenNewPopupWdw(url, provider, ct.Token);
+        }
+      }
+    }
+
+    private void OpenNewPopupWdw(string url, IContentProvider provider, RemoteCancellationToken ct)
+    {
+      Application.Current.Dispatcher.Invoke(() => 
+      {
+        var wdw = new PopupWdw(url, provider, ct);
+        wdw.ShowAndActivate();
+        CurrentWdw = wdw;
+      });
+    }
+
+    private void SubscribeToMouseLeaveEvent(IHTMLLinkElement link, RemoteCancellationTokenSource ct)
+    {
+      if (link == null)
+      {
+        LogTo.Warning("Failed to subscribe to MouseLeaveEvent");
+        return;
+      }
+
+      ((IHTMLElement2)link).attachEvent("onmouseleave", new HtmlElementEvent(ct.Cancel));
 
     }
 
-    public bool RegisterProvider(string name, Func<string, bool> predicate, IContentProvider provider)
+    public bool RegisterProvider(string name, List<string> urlRegexes, IContentProvider provider)
     {
 
       if (string.IsNullOrEmpty(name))
@@ -93,23 +154,9 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     }
 
-
     #endregion
 
-
     #region Methods
-
-    // Uncomment to register an event handler for element changed events
-    // [LogToErrorOnException]
-    // public void OnElementChanged(SMDisplayedElementChangedEventArgs e)
-    // {
-    //   try
-    //   {
-    //     Insert your logic here
-    //   }
-    //   catch (RemotingException) { }
-    // }
-
     #endregion
   }
 }

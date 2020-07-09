@@ -9,11 +9,11 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup.Models
 {
   class ContentProviderInfo
   {
-    public Func<string, bool> predicate { get; set; }
+    public List<string> urlRegexes { get; set; }
     public IContentProvider provider { get; set; }
-    public ContentProviderInfo(Func<string, bool> predicate, IContentProvider provider)
+    public ContentProviderInfo(List<string> urlRegexes, IContentProvider provider)
     {
-      this.predicate = predicate;
+      this.urlRegexes = urlRegexes;
       this.provider = provider;
     }
   }

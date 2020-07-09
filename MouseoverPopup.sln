@@ -15,8 +15,6 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SuperMemoAssistant.Plugins.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MouseoverPopup.Interop", "..\MouseoverPopup.Interop\MouseoverPopup.Interop.csproj", "{C2A1A16B-45C5-41E3-8948-B554CE311BFD}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Libs", "Libs", "{62191CAD-505C-40D3-9C4E-B02ED627BCD5}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		1. Alpha (Debug)|Any CPU = 1. Alpha (Debug)|Any CPU

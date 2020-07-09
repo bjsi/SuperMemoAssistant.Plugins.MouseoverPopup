@@ -12,9 +12,9 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 {
   public class MouseoverService : PerpetualMarshalByRefObject, IMouseoverSvc
   {
-    public bool RegisterProvider(string name, Func<string, bool> predicate, IContentProvider provider)
+    public bool RegisterProvider(string name, List<string> urlRegexes, IContentProvider provider)
     {
-      return Svc<MouseoverPopupPlugin>.Plugin.RegisterProvider(name, predicate, provider);
+      return Svc<MouseoverPopupPlugin>.Plugin.RegisterProvider(name, urlRegexes, provider);
     }
   }
 }
