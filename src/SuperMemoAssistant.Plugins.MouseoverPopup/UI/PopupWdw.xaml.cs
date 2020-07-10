@@ -26,11 +26,13 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup.UI
   {
 
     public bool IsClosed { get; set; }
+    public RemoteCancellationToken ct { get; set; }
 
     public PopupWdw(string url, IContentProvider provider, RemoteCancellationToken ct)
     {
       InitializeComponent();
       Closed += (sender, args) => IsClosed = true;
+      this.ct = ct;
       ct.Register(new ActionProxy(Cancelled));
       wb1.DocumentCompleted += Wb1_DocumentCompleted;
       FetchHtml(url, provider, ct);
@@ -55,7 +57,15 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup.UI
       string html = await provider.FetchHtml(ct, url);
       if (string.IsNullOrEmpty(html))
         return;
-      wb1.Navigate(html);
+      SetHtml(html);
+    }
+
+    private void SetHtml(string html)
+    {
+      wb1.DocumentText = "0";
+      wb1.Document.OpenNew(true);
+      wb1.Document.Write(html);
+      wb1.Refresh();
     }
 
     private void Cancelled() 

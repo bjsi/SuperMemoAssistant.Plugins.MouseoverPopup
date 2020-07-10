@@ -70,7 +70,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     private Dictionary<string, ContentProviderInfo> providers { get; set; } = new Dictionary<string, ContentProviderInfo>();
     private MouseoverService _mouseoverSvc { get; set; }
     private HTMLControlEvents htmlDocEvents { get; set; }
-    private PopupWdw CurrentWdw { get; set; }
+    private PopupWdw CurrentWdw { get; set; } = null;
 
     #endregion
 
@@ -82,6 +82,30 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       _mouseoverSvc = new MouseoverService();
       PublishService<IMouseoverSvc, MouseoverService>(_mouseoverSvc);
       SubscribeToMouseoverEvents();
+
+      // Testing: any <a> element mouseleave event will close the open window
+      SubscribeToMouseleaveEvents();
+    }
+
+    private void SubscribeToMouseleaveEvents()
+    {
+      var events = new List<EventInitOptions>
+      {
+        new EventInitOptions(EventType.onmouseleave, _ => true, x => ((IHTMLElement)x).tagName.ToLower() == "a")
+      };
+
+      htmlDocEvents = new HTMLControlEvents(events);
+      htmlDocEvents.OnMouseLeaveEvent += HtmlDocEvents_OnMouseLeaveEvent;
+
+    }
+
+    // TODO: Cancel the token?
+    private void HtmlDocEvents_OnMouseLeaveEvent(object sender, IHTMLControlEventArgs e)
+    {
+
+      if (CurrentWdw != null && !CurrentWdw.IsClosed)
+        Application.Current.Dispatcher.Invoke(() => CurrentWdw.Close());
+
     }
 
     private void SubscribeToMouseoverEvents()
@@ -98,14 +122,11 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     private void HtmlDocEvents_OnMouseEnterEvent(object sender, IHTMLControlEventArgs e)
     {
 
-      if (CurrentWdw != null || !CurrentWdw.IsClosed)
+      if (CurrentWdw != null && !CurrentWdw.IsClosed)
         return;
 
       var link = e.EventObj.srcElement as IHTMLAnchorElement;
       string url = link?.href;
-      
-      // TODO: Sub to mouseleave immediately??
-      // Cancel if window already open
       
       foreach (var keyValuePair in providers)
       {
@@ -115,7 +136,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         if (regexes.Any(r => new Regex(r).Match(url).Success))
         {
           RemoteCancellationTokenSource ct = new RemoteCancellationTokenSource();
-          SubscribeToMouseLeaveEvent(link, ct);
           OpenNewPopupWdw(url, provider, ct.Token);
         }
       }
@@ -129,18 +149,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         wdw.ShowAndActivate();
         CurrentWdw = wdw;
       });
-    }
-
-    private void SubscribeToMouseLeaveEvent(IHTMLAnchorElement link, RemoteCancellationTokenSource ct)
-    {
-      if (link == null)
-      {
-        LogTo.Warning("Failed to subscribe to MouseLeaveEvent");
-        return;
-      }
-
-      ((IHTMLElement2)link).attachEvent("onmouseleave", new HtmlElementEvent(ct.Cancel));
-
     }
 
     public bool RegisterProvider(string name, List<string> urlRegexes, IContentProvider provider)
