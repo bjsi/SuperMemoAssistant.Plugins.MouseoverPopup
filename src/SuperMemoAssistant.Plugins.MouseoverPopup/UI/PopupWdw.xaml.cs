@@ -24,9 +24,13 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup.UI
   /// </summary>
   public partial class PopupWdw : Window
   {
+
+    public bool IsClosed { get; set; }
+
     public PopupWdw(string url, IContentProvider provider, RemoteCancellationToken ct)
     {
       InitializeComponent();
+      Closed += (sender, args) => IsClosed = true;
       ct.Register(new ActionProxy(Cancelled));
       wb1.DocumentCompleted += Wb1_DocumentCompleted;
       FetchHtml(url, provider, ct);

@@ -97,9 +97,15 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     private void HtmlDocEvents_OnMouseEnterEvent(object sender, IHTMLControlEventArgs e)
     {
-      var link = e.EventObj.srcElement as IHTMLLinkElement;
+
+      if (CurrentWdw != null || !CurrentWdw.IsClosed)
+        return;
+
+      var link = e.EventObj.srcElement as IHTMLAnchorElement;
       string url = link?.href;
       
+      // TODO: Sub to mouseleave immediately??
+      // Cancel if window already open
       
       foreach (var keyValuePair in providers)
       {
@@ -125,7 +131,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       });
     }
 
-    private void SubscribeToMouseLeaveEvent(IHTMLLinkElement link, RemoteCancellationTokenSource ct)
+    private void SubscribeToMouseLeaveEvent(IHTMLAnchorElement link, RemoteCancellationTokenSource ct)
     {
       if (link == null)
       {
