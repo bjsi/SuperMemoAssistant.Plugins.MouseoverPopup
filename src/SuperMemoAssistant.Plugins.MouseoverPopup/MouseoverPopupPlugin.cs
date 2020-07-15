@@ -83,6 +83,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     private HtmlEvent PopupBrowserButtonClick { get; set; }
     private IHTMLPopup CurrentPopup { get; set; }
     public MouseoverPopupCfg Config;
+    public PopupContent CurrentContent { get; set; }
 
     #endregion
 
@@ -189,7 +190,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
           doc.body.style.border = "solid black 1px";
           doc.body.style.overflow = "scroll";
           doc.body.style.margin = "5px";
-          doc.body.innerHTML = html;
+          doc.body.innerHTML = content.html;
 
           // TODO: Add extract icon to button
           // Extract button
@@ -224,6 +225,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
           PopupBrowserButtonClick.OnEvent += PopupBrowserButtonClick_OnEvent;
 
           // TODO: How to size to content?
+          CurrentContent = content;
           CurrentPopup.Show(x, y, 300, 350, body);
 
         }
@@ -251,7 +253,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       if (selObj.IsNull() || selObj.text.IsNullOrEmpty())
       {
         // Extract the whole popup document
-        CreateSMExtract(htmlDoc.body.innerHTML);
+        CreateSMExtract(CurrentContent.html);
       }
       else
       {
@@ -283,8 +285,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       // Config.Defautl
       double priority = 30;
 
-      // TODO: References
-
       bool ret = Svc.SM.Registry.Element.Add(
         out var value,
         ElemCreationFlags.ForceCreate,
@@ -292,6 +292,11 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
           .WithParent(currentElement)
           .WithLayout("Article")
           .WithPriority(priority)
+          .WithReference(r =>
+            r.WithLink(CurrentContent.references.Link)
+             .WithSource(CurrentContent.references.Source)
+             .WithTitle(CurrentContent.references.Title)
+          )
           .DoNotDisplay()
       );
 
