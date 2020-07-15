@@ -21,14 +21,33 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         "Save",
         IsDefault = true,
         Validates = true)]
-  class MouseoverPopupCfg : CfgBase<MouseoverPopupCfg>, INotifyPropertyChangedEx
+  public class MouseoverPopupCfg : CfgBase<MouseoverPopupCfg>, INotifyPropertyChangedEx
   {
+
+    [Title("Plugin Name")]
+
+    [Heading("By Jamesb | Experimental Learning")]
+
+    [Heading("Features:")]
+    [Text(@"- Preview link content in a popup window.
+- Publishes itself as a service to enable integration with other plugins.")]
+
+    [Heading("General Settings")]
 
     [Field(Name = "Block SM default url click behaviour?")]
     public bool BlockUrlMouseClick { get; set; } = true;
 
     [Field(Name = "Highlight targetted urls")]
     public bool HighlightUrls { get; set; } = true;
+
+    [Field(Name = "Default Popup Extract Priority (%)")]
+    [Value(Must.BeGreaterThanOrEqualTo,
+           0,
+           StrictValidation = true)]
+    [Value(Must.BeLessThanOrEqualTo,
+           100,
+           StrictValidation = true)]
+    public double DefaultPriority { get; set; } = 30;
 
     [JsonIgnore]
     public bool IsChanged { get; set; }

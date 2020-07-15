@@ -33,18 +33,25 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 {
   using System;
   using System.Collections.Generic;
+  using System.Diagnostics;
   using System.Diagnostics.CodeAnalysis;
   using System.Linq;
+  using System.Runtime.Remoting;
   using System.Text.RegularExpressions;
   using System.Threading;
+  using System.Threading.Tasks;
   using System.Windows;
   using Anotar.Serilog;
   using global::MouseoverPopup.Interop;
   using mshtml;
   using SuperMemoAssistant.Extensions;
   using SuperMemoAssistant.Interop.Plugins;
+  using SuperMemoAssistant.Interop.SuperMemo.Content.Contents;
+  using SuperMemoAssistant.Interop.SuperMemo.Elements.Builders;
+  using SuperMemoAssistant.Interop.SuperMemo.Elements.Models;
   using SuperMemoAssistant.Plugins.MouseoverPopup.Models;
   using SuperMemoAssistant.Plugins.MouseoverPopup.UI;
+  using SuperMemoAssistant.Services;
   using SuperMemoAssistant.Services.Sentry;
   using SuperMemoAssistant.Sys.Remoting;
 
@@ -66,15 +73,25 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     public override string Name => "MouseoverPopup";
 
     /// <inheritdoc />
-    public override bool HasSettings => false;
+    public override bool HasSettings => true;
     private Dictionary<string, ContentProviderInfo> providers { get; set; } = new Dictionary<string, ContentProviderInfo>();
     private MouseoverService _mouseoverSvc { get; set; }
     private HTMLControlEvents htmlDocEvents { get; set; }
     private PopupWdw CurrentWdw { get; set; } = null;
 
+    private HtmlEvent ExtractButtonClick { get; set; }
+    private HtmlEvent PopupBrowserButtonClick { get; set; }
+    private IHTMLPopup CurrentPopup { get; set; }
+    public MouseoverPopupCfg Config;
+
     #endregion
 
     #region Methods Impl
+
+    private void LoadConfig()
+    {
+      Config = Svc.Configuration.Load<MouseoverPopupCfg>() ?? new MouseoverPopupCfg();
+    }
 
     /// <inheritdoc />
     protected override void PluginInit()
@@ -119,8 +136,12 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       htmlDocEvents.OnMouseEnterEvent += HtmlDocEvents_OnMouseEnterEvent;
     }
 
-    private void HtmlDocEvents_OnMouseEnterEvent(object sender, IHTMLControlEventArgs e)
+    private async void HtmlDocEvents_OnMouseEnterEvent(object sender, IHTMLControlEventArgs e)
     {
+
+      var ev = e.EventObj;
+      var x = ev.clientX;
+      var y = ev.clientY;
 
       if (CurrentWdw != null && !CurrentWdw.IsClosed)
         return;
@@ -136,19 +157,152 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         if (regexes.Any(r => new Regex(r).Match(url).Success))
         {
           RemoteCancellationTokenSource ct = new RemoteCancellationTokenSource();
-          OpenNewPopupWdw(url, provider, ct.Token);
+          await OpenNewPopupWdw(url, provider, ct.Token, x, y);
         }
       }
     }
 
-    private void OpenNewPopupWdw(string url, IContentProvider provider, RemoteCancellationToken ct)
+    private async Task OpenNewPopupWdw(string url, IContentProvider provider, RemoteCancellationToken ct, int x, int y)
     {
-      Application.Current.Dispatcher.Invoke(() => 
+
+      // Get html
+      PopupContent content = await provider.FetchHtml(ct, url);
+      if (content.IsNull() || content.html.IsNullOrEmpty())
+        return;
+
+      // Create Popup
+      await Application.Current.Dispatcher.BeginInvoke((Action)(() =>
       {
-        var wdw = new PopupWdw(url, provider, ct);
-        wdw.ShowAndActivate();
-        CurrentWdw = wdw;
-      });
+        try
+        {
+
+          var wdw = ContentUtils.GetFocusedHtmlWindow() as IHTMLWindow4;
+          if (wdw.IsNull())
+            return;
+
+          var body = ((IHTMLWindow2)wdw).document?.body;
+          CurrentPopup = wdw?.createPopup() as IHTMLPopup;
+          var doc = ((IHTMLDocument2)CurrentPopup?.document);
+          if (doc.IsNull())
+            return;
+
+          doc.body.style.border = "solid black 1px";
+          doc.body.style.overflow = "scroll";
+          doc.body.style.margin = "5px";
+          doc.body.innerHTML = html;
+
+          // TODO: Add extract icon to button
+          // Extract button
+          var extractBtn = doc.createElement("<button>");
+          extractBtn.id = "extract-btn";
+          extractBtn.innerText = "Extract";
+          extractBtn.style.margin = "5px";
+
+          var browserBtn = doc.createElement("<button>");
+          browserBtn.id = "browser-btn";
+          browserBtn.innerText = "Popup Browser";
+          browserBtn.style.margin = "5px";
+
+          // Main Content
+          // TODO: scroll doens't work
+          //var main = doc.createElement("<div>");
+          //main.id = "main-content";
+          //main.style.margin = "5px";
+          //main.style.overflow = "scroll";
+          //main.innerHTML = html;
+
+          ((IHTMLDOMNode)doc.body).appendChild((IHTMLDOMNode)extractBtn);
+          ((IHTMLDOMNode)doc.body).appendChild((IHTMLDOMNode)browserBtn);
+
+          PopupBrowserButtonClick = new HtmlEvent();
+          ExtractButtonClick = new HtmlEvent();
+
+          ((IHTMLElement2)extractBtn).SubscribeTo(EventType.onclick, ExtractButtonClick);
+          ExtractButtonClick.OnEvent += ExtractButtonClick_OnEvent;
+
+          ((IHTMLElement2)browserBtn).SubscribeTo(EventType.onclick, PopupBrowserButtonClick);
+          PopupBrowserButtonClick.OnEvent += PopupBrowserButtonClick_OnEvent;
+
+          // TODO: How to size to content?
+          CurrentPopup.Show(x, y, 300, 350, body);
+
+        }
+        catch (RemotingException) { }
+        catch (UnauthorizedAccessException) { }
+
+      }));
+
+    }
+
+    private void PopupBrowserButtonClick_OnEvent(object sender, IControlHtmlEventArgs e)
+    {
+    }
+
+    private void ExtractButtonClick_OnEvent(object sender, IControlHtmlEventArgs e)
+    {
+
+      if (CurrentPopup.IsNull())
+        return;
+
+      var htmlDoc = CurrentPopup?.document as IHTMLDocument2;
+
+      var sel = htmlDoc?.selection;
+      var selObj = sel?.createRange() as IHTMLTxtRange;
+      if (selObj.IsNull() || selObj.text.IsNullOrEmpty())
+      {
+        // Extract the whole popup document
+        CreateSMExtract(htmlDoc.body.innerHTML);
+      }
+      else
+      {
+        // Extract selected html
+        CreateSMExtract(selObj.htmlText);
+      }
+
+    }
+
+    private void CreateSMExtract(string extract)
+    {
+
+      if (extract.IsNullOrEmpty())
+      {
+        LogTo.Error("Failed to CreateSMElement beacuse extract text was null");
+        return;
+      }
+
+      var contents = new List<ContentBase>();
+      contents.Add(new TextContent(true, extract));
+      var currentElement = Svc.SM.UI.ElementWdw.CurrentElement;
+
+      if (currentElement == null)
+      {
+        LogTo.Error("Failed to CreateSMElement beacuse element was null");
+        return;
+      }
+
+      // Config.Defautl
+      double priority = 30;
+
+      // TODO: References
+
+      bool ret = Svc.SM.Registry.Element.Add(
+        out var value,
+        ElemCreationFlags.ForceCreate,
+        new ElementBuilder(ElementType.Topic, contents.ToArray())
+          .WithParent(currentElement)
+          .WithLayout("Article")
+          .WithPriority(priority)
+          .DoNotDisplay()
+      );
+
+      if (ret)
+      {
+        LogTo.Debug("Successfully created SM Element");
+      }
+      else
+      {
+        LogTo.Error("Failed to CreateSMElement");
+      }
     }
 
     public bool RegisterProvider(string name, List<string> urlRegexes, IContentProvider provider)
