@@ -85,6 +85,8 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     public MouseoverPopupCfg Config;
     public PopupContent CurrentContent { get; set; }
 
+    private EventfulConcurrentQueue<Action> EventQueue = new EventfulConcurrentQueue<Action>();
+
     #endregion
 
     #region Methods Impl
@@ -97,59 +99,64 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     /// <inheritdoc />
     protected override void PluginInit()
     {
+
+      LoadConfig();
+
       _mouseoverSvc = new MouseoverService();
+
       PublishService<IMouseoverSvc, MouseoverService>(_mouseoverSvc);
+
       SubscribeToMouseoverEvents();
 
-      // Testing: any <a> element mouseleave event will close the open window
-      SubscribeToMouseleaveEvents();
+      _ = Task.Factory.StartNew(DispatchEvents, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
     }
 
-    private void SubscribeToMouseleaveEvents()
+    private void DispatchEvents()
     {
-      var events = new List<EventInitOptions>
+      while (true)
       {
-        new EventInitOptions(EventType.onmouseleave, _ => true, x => ((IHTMLElement)x).tagName.ToLower() == "a")
-      };
-
-      htmlDocEvents = new HTMLControlEvents(events);
-      htmlDocEvents.OnMouseLeaveEvent += HtmlDocEvents_OnMouseLeaveEvent;
-
-    }
-
-    // TODO: Cancel the token?
-    private void HtmlDocEvents_OnMouseLeaveEvent(object sender, IHTMLControlEventArgs e)
-    {
-
-      if (CurrentWdw != null && !CurrentWdw.IsClosed)
-        Application.Current.Dispatcher.Invoke(() => CurrentWdw.Close());
-
+        EventQueue.DataAvailableEvent.WaitOne(3000);
+        while (EventQueue.TryDequeue(out var action))
+        {
+          action();
+        }
+      }
     }
 
     private void SubscribeToMouseoverEvents()
     {
+
       var events = new List<EventInitOptions>
       {
-        new EventInitOptions(EventType.onmouseenter, _ => true, x => ((IHTMLElement)x).tagName.ToLower() == "a")
+        new EventInitOptions(EventType.onmouseenter, _ => true, x => ((IHTMLElement)x).tagName.ToLower() == "a"),
+        new EventInitOptions(EventType.onmousedown, _ => true, x => ((IHTMLElement)x).tagName.ToLower() == "a")
       };
 
       htmlDocEvents = new HTMLControlEvents(events);
-      htmlDocEvents.OnMouseEnterEvent += HtmlDocEvents_OnMouseEnterEvent;
+      htmlDocEvents.OnMouseEnterEvent += HtmlDocEvents_OnMouseOverEvent;
+      htmlDocEvents.OnMouseDownEvent += HtmlDocEvents_OnMouseDownEvent;
     }
 
-    private async void HtmlDocEvents_OnMouseEnterEvent(object sender, IHTMLControlEventArgs e)
+    private void HtmlDocEvents_OnMouseDownEvent(object sender, IHTMLControlEventArgs e)
     {
+      HtmlDocEvents_OnMouseOverEvent(sender, e);
+      e.EventObj.returnValue = false;
+    }
 
+    private async void HtmlDocEvents_OnMouseOverEvent(object sender, IHTMLControlEventArgs e)
+    {
       var ev = e.EventObj;
       var x = ev.clientX;
       var y = ev.clientY;
 
+      var link = e.EventObj.srcElement as IHTMLAnchorElement;
+      string url = link?.href;
+      if (url.IsNullOrEmpty())
+        return;
+
       if (CurrentWdw != null && !CurrentWdw.IsClosed)
         return;
 
-      var link = e.EventObj.srcElement as IHTMLAnchorElement;
-      string url = link?.href;
-      
       foreach (var keyValuePair in providers)
       {
         var regexes = keyValuePair.Value.urlRegexes;
@@ -157,8 +164,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
         if (regexes.Any(r => new Regex(r).Match(url).Success))
         {
-          RemoteCancellationTokenSource ct = new RemoteCancellationTokenSource();
-          await OpenNewPopupWdw(url, provider, ct.Token, x, y);
+          await OpenNewPopupWdw(url, provider, new RemoteCancellationToken(new CancellationToken()), x, y);
         }
       }
     }
@@ -242,24 +248,30 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     private void ExtractButtonClick_OnEvent(object sender, IControlHtmlEventArgs e)
     {
+      Action action = () => {
 
-      if (CurrentPopup.IsNull())
-        return;
+        if (CurrentPopup.IsNull())
+          return;
 
-      var htmlDoc = CurrentPopup?.document as IHTMLDocument2;
+        var htmlDoc = CurrentPopup?.document as IHTMLDocument2;
 
-      var sel = htmlDoc?.selection;
-      var selObj = sel?.createRange() as IHTMLTxtRange;
-      if (selObj.IsNull() || selObj.text.IsNullOrEmpty())
-      {
-        // Extract the whole popup document
-        CreateSMExtract(CurrentContent.html);
-      }
-      else
-      {
-        // Extract selected html
-        CreateSMExtract(selObj.htmlText);
-      }
+        var sel = htmlDoc?.selection;
+        var selObj = sel?.createRange() as IHTMLTxtRange;
+        if (selObj.IsNull() || selObj.text.IsNullOrEmpty())
+        {
+          // Extract the whole popup document
+          CreateSMExtract(CurrentContent.html);
+        }
+        else
+        {
+          // Extract selected html
+          CreateSMExtract(selObj.htmlText);
+        }
+
+      };
+
+      EventQueue.Enqueue(action);
+
 
     }
 
