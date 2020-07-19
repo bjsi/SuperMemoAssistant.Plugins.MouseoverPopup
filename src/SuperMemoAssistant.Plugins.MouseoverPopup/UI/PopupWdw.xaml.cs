@@ -55,9 +55,9 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup.UI
     private async Task FetchHtml(string url, IContentProvider provider, RemoteCancellationToken ct)
     {
       var content = await provider.FetchHtml(ct, url);
-      if (string.IsNullOrEmpty(content.html))
+      if (string.IsNullOrEmpty(content.Html))
         return;
-      SetHtml(content.html);
+      SetHtml(content.Html);
     }
 
     private void SetHtml(string html)

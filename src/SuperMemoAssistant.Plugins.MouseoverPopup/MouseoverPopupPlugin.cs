@@ -74,14 +74,26 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     /// <inheritdoc />
     public override bool HasSettings => true;
+
+    /// <summary>
+    /// Stores the content providers whose services are requesed on mouseover events.
+    /// </summary>
     private Dictionary<string, ContentProviderInfo> providers { get; set; } = new Dictionary<string, ContentProviderInfo>();
+
+    /// <summary>
+    /// Service that providers can call to register themselves.
+    /// </summary>
     private MouseoverService _mouseoverSvc { get; set; }
     private HTMLControlEvents htmlDocEvents { get; set; }
     private PopupWdw CurrentWdw { get; set; } = null;
 
     private HtmlEvent ExtractButtonClick { get; set; }
     private HtmlEvent PopupBrowserButtonClick { get; set; }
+    private HtmlEvent GotoElementButtonClick { get; set; }
+
+
     private IHTMLPopup CurrentPopup { get; set; }
+
     public MouseoverPopupCfg Config;
     public PopupContent CurrentContent { get; set; }
 
@@ -129,18 +141,10 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       var events = new List<EventInitOptions>
       {
         new EventInitOptions(EventType.onmouseenter, _ => true, x => ((IHTMLElement)x).tagName.ToLower() == "a"),
-        new EventInitOptions(EventType.onmousedown, _ => true, x => ((IHTMLElement)x).tagName.ToLower() == "a")
       };
 
       htmlDocEvents = new HTMLControlEvents(events);
       htmlDocEvents.OnMouseEnterEvent += HtmlDocEvents_OnMouseOverEvent;
-      htmlDocEvents.OnMouseDownEvent += HtmlDocEvents_OnMouseDownEvent;
-    }
-
-    private void HtmlDocEvents_OnMouseDownEvent(object sender, IHTMLControlEventArgs e)
-    {
-      HtmlDocEvents_OnMouseOverEvent(sender, e);
-      e.EventObj.returnValue = false;
     }
 
     private async void HtmlDocEvents_OnMouseOverEvent(object sender, IHTMLControlEventArgs e)
@@ -174,7 +178,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
       // Get html
       PopupContent content = await provider.FetchHtml(ct, url);
-      if (content.IsNull() || content.html.IsNullOrEmpty())
+      if (content.IsNull() || content.Html.IsNullOrEmpty())
         return;
 
       // Create Popup
@@ -196,49 +200,96 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
           doc.body.style.border = "solid black 1px";
           doc.body.style.overflow = "scroll";
           doc.body.style.margin = "5px";
-          doc.body.innerHTML = content.html;
+          doc.body.innerHTML = content.Html;
 
-          // TODO: Add extract icon to button
-          // Extract button
-          var extractBtn = doc.createElement("<button>");
-          extractBtn.id = "extract-btn";
-          extractBtn.innerText = "Extract";
-          extractBtn.style.margin = "5px";
+          if (content.AllowExtract)
+          {
 
-          var browserBtn = doc.createElement("<button>");
-          browserBtn.id = "browser-btn";
-          browserBtn.innerText = "Popup Browser";
-          browserBtn.style.margin = "5px";
+            // TODO: Add extract icon to button
+            // Create Extract button
+            var extractBtn = doc.createElement("<button>");
+            extractBtn.id = "extract-btn";
+            extractBtn.innerText = "Extract";
+            extractBtn.style.margin = "5px";
 
-          // Main Content
-          // TODO: scroll doens't work
-          //var main = doc.createElement("<div>");
-          //main.id = "main-content";
-          //main.style.margin = "5px";
-          //main.style.overflow = "scroll";
-          //main.innerHTML = html;
+            // Add extract button
+            ((IHTMLDOMNode)doc.body).appendChild((IHTMLDOMNode)extractBtn);
 
-          ((IHTMLDOMNode)doc.body).appendChild((IHTMLDOMNode)extractBtn);
-          ((IHTMLDOMNode)doc.body).appendChild((IHTMLDOMNode)browserBtn);
+            // Add click event
+            ExtractButtonClick = new HtmlEvent();
+            ((IHTMLElement2)extractBtn).SubscribeTo(EventType.onclick, ExtractButtonClick);
+            ExtractButtonClick.OnEvent += ExtractButtonClick_OnEvent;
 
-          PopupBrowserButtonClick = new HtmlEvent();
-          ExtractButtonClick = new HtmlEvent();
+          }
 
-          ((IHTMLElement2)extractBtn).SubscribeTo(EventType.onclick, ExtractButtonClick);
-          ExtractButtonClick.OnEvent += ExtractButtonClick_OnEvent;
+          if (content.AllowGotoInSM)
+          {
 
-          ((IHTMLElement2)browserBtn).SubscribeTo(EventType.onclick, PopupBrowserButtonClick);
-          PopupBrowserButtonClick.OnEvent += PopupBrowserButtonClick_OnEvent;
+            // Create goto element button
+            var gotobutton = doc.createElement("<button>");
+            gotobutton.id = "goto-btn";
+            gotobutton.innerText = "Goto Element";
+            gotobutton.style.margin = "5px";
+
+            // Add Goto button
+            ((IHTMLDOMNode)doc.body).appendChild((IHTMLDOMNode)gotobutton);
+
+            // Add click event
+            GotoElementButtonClick = new HtmlEvent();
+            ((IHTMLElement2)gotobutton).SubscribeTo(EventType.onclick, GotoElementButtonClick);
+            GotoElementButtonClick.OnEvent += (sender, e) => GotoElementButtonClick_OnEvent(sender, e, content.SMElementId);
+
+          }
+
+          if (content.AllowOpenInBrowser)
+          {
+
+            // Create browser button
+            var browserBtn = doc.createElement("<button>");
+            browserBtn.id = "browser-btn";
+            browserBtn.innerText = "Popup Browser";
+            browserBtn.style.margin = "5px";
+
+            // Create open button
+            ((IHTMLDOMNode)doc.body).appendChild((IHTMLDOMNode)browserBtn);
+
+            // Add click event
+            PopupBrowserButtonClick = new HtmlEvent();
+            ((IHTMLElement2)browserBtn).SubscribeTo(EventType.onclick, PopupBrowserButtonClick);
+            PopupBrowserButtonClick.OnEvent += PopupBrowserButtonClick_OnEvent;
+
+          }
 
           // TODO: How to size to content?
           CurrentContent = content;
-          CurrentPopup.Show(x, y, 300, 350, body);
+          CurrentPopup.Show(x, y, 350, 350, body);
 
         }
         catch (RemotingException) { }
         catch (UnauthorizedAccessException) { }
 
       }));
+
+    }
+
+    private void GotoElementButtonClick_OnEvent(object sender, IControlHtmlEventArgs e, int elementId)
+    {
+
+      if (elementId < 0)
+        return;
+
+      if (Svc.SM.Registry.Element[elementId].IsNull())
+        return;
+
+      Action action = () =>
+      {
+
+        if (!Svc.SM.UI.ElementWdw.GoToElement(elementId))
+          LogTo.Warning($"Failed to GoToElement with id {elementId}");
+
+      };
+
+      EventQueue.Enqueue(action);
 
     }
 
@@ -260,7 +311,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         if (selObj.IsNull() || selObj.text.IsNullOrEmpty())
         {
           // Extract the whole popup document
-          CreateSMExtract(CurrentContent.html);
+          CreateSMExtract(CurrentContent.Html);
         }
         else
         {
@@ -305,9 +356,9 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
           .WithLayout("Article")
           .WithPriority(priority)
           .WithReference(r =>
-            r.WithLink(CurrentContent.references.Link)
-             .WithSource(CurrentContent.references.Source)
-             .WithTitle(CurrentContent.references.Title)
+            r.WithLink(CurrentContent.References.Link)
+             .WithSource(CurrentContent.References.Source)
+             .WithTitle(CurrentContent.References.Title)
           )
           .DoNotDisplay()
       );
