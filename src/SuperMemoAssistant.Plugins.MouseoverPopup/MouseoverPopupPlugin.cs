@@ -51,6 +51,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
   using SuperMemoAssistant.Interop.SuperMemo.Elements.Models;
   using SuperMemoAssistant.Plugins.MouseoverPopup.Models;
   using SuperMemoAssistant.Plugins.MouseoverPopup.UI;
+  using SuperMemoAssistant.Plugins.PopupWindow.Interop;
   using SuperMemoAssistant.Services;
   using SuperMemoAssistant.Services.Sentry;
   using SuperMemoAssistant.Sys.Remoting;
@@ -83,15 +84,22 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     /// <summary>
     /// Service that providers can call to register themselves.
     /// </summary>
-    private MouseoverService _mouseoverSvc { get; set; }
+    private MouseoverService _mouseoverSvc = new MouseoverService();
+
+    /// <summary>
+    /// Service for communication between mouseover popup and popup window.
+    /// </summary>
+    private IPopupWindowSvc _popupWindowSvc { get; set; }
 
     /// <summary>
     /// HtmlDocumentEvents
     /// TODO: Refactor
     /// </summary>
     private HTMLControlEvents htmlDocEvents { get; set; }
+    private HtmlEvent AnchorElementMouseLeave { get; set; }
 
     // Popup window events
+    private HtmlEvent PopupWindowLinkClick { get; set; }
     private HtmlEvent ExtractButtonClick { get; set; }
     private HtmlEvent PopupBrowserButtonClick { get; set; }
     private HtmlEvent GotoElementButtonClick { get; set; }
@@ -116,9 +124,9 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
       LoadConfig();
 
-      _mouseoverSvc = new MouseoverService();
-
       PublishService<IMouseoverSvc, MouseoverService>(_mouseoverSvc);
+
+      _popupWindowSvc = GetService<IPopupWindowSvc>();
 
       SubscribeToMouseoverEvents();
 
@@ -169,6 +177,37 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       if (providers.IsNull() || providers.Count == 0)
         return;
 
+      var provider = MatchContentProvider(url);
+      if (provider.IsNull())
+        return;
+
+      var parentWdw = Application.Current.Dispatcher.Invoke(() => ContentUtils.GetFocusedHtmlWindow());
+      if (parentWdw.IsNull())
+        return;
+
+      // Add mouseleave event to cancel early
+      var rcts = new RemoteCancellationTokenSource();
+      AnchorElementMouseLeave = new HtmlEvent();
+      ((IHTMLElement2)linkElement).SubscribeTo(EventType.onmouseleave, AnchorElementMouseLeave);
+      AnchorElementMouseLeave.OnEvent += (sender, args) => rcts?.Cancel();
+
+      try
+      {
+        await OpenNewPopupWdw((IHTMLWindow4)parentWdw, url, provider, rcts.Token, x, y);
+      }
+      catch (RemotingException) { }
+
+    }
+
+    private IMouseoverContentProvider MatchContentProvider(string url)
+    {
+
+      if (url.IsNullOrEmpty())
+        return null;
+
+      if (providers.IsNull() || providers.Count == 0)
+        return null;
+
       // Find the matching provider
       foreach (var keyValuePair in providers)
       {
@@ -177,16 +216,18 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
         if (regexes.Any(r => new Regex(r).Match(url).Success))
         {
-          await OpenNewPopupWdw(url, provider, new RemoteCancellationToken(new CancellationToken()), x, y);
-          break;
+          return provider;
         }
       }
+
+      return null;
+
     }
 
-    private async Task OpenNewPopupWdw(string url, IContentProvider provider, RemoteCancellationToken ct, int x, int y)
+    private async Task OpenNewPopupWdw(IHTMLWindow4 parentWdw, string url, IMouseoverContentProvider provider, RemoteCancellationToken ct, int x, int y)
     {
 
-      if (url.IsNullOrEmpty() || provider.IsNull())
+      if (url.IsNullOrEmpty() || provider.IsNull() || parentWdw.IsNull())
         return;
 
       // Get html
@@ -194,17 +235,14 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       if (content.IsNull() || content.Html.IsNullOrEmpty())
         return;
 
+
       // Create Popup
       await Application.Current.Dispatcher.BeginInvoke((Action)(() =>
       {
         try
         {
 
-          var wdw = ContentUtils.GetFocusedHtmlWindow() as IHTMLWindow4;
-          if (wdw.IsNull())
-            return;
-
-          var htmlDoc = ((IHTMLWindow2)wdw).document;
+          var htmlDoc = ((IHTMLWindow2)parentWdw).document;
           if (htmlDoc.IsNull())
             return;
 
@@ -212,7 +250,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
           if (htmlCtrlBody.IsNull())
             return;
 
-          var popup = wdw.CreatePopup();
+          var popup = parentWdw.CreatePopup();
           popup.OnShow += (sender, args) => _mouseoverSvc?.InvokeOnShow(sender, args);
           if (popup.IsNull())
             return;
@@ -226,6 +264,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
           //popupDoc.body.style.overflow = "scroll";
           popupDoc.body.style.margin = "7px";
           popupDoc.body.innerHTML = content.Html;
+
 
           // Extract Button
           if (content.AllowExtract)
@@ -284,7 +323,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
             // Add click event
             PopupBrowserButtonClick = new HtmlEvent();
             ((IHTMLElement2)browserBtn).SubscribeTo(EventType.onclick, PopupBrowserButtonClick);
-            PopupBrowserButtonClick.OnEvent += PopupBrowserButtonClick_OnEvent;
+            PopupBrowserButtonClick.OnEvent += (sender, args) => PopupBrowserButtonClick_OnEvent(sender, args, content.BrowserQuery);
 
           }
 
@@ -297,14 +336,76 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
             height = maxheight;
             popupDoc.body.style.overflow = "scroll";
           }
+          else
+          {
+            popupDoc.body.style.overflow = "";
+          }
 
           popup.Show(x, y, width, height);
+
+          // Popup links
+          PopupWindowLinkClick = new HtmlEvent();
+          ((IHTMLElement2)popupDoc.body).SubscribeTo(EventType.onclick, PopupWindowLinkClick);
+          PopupWindowLinkClick.OnEvent += (sender, args) => PopupWindowLinkClick_OnEvent(sender, args, x, y, width, height, popup);
 
         }
         catch (RemotingException) { }
         catch (UnauthorizedAccessException) { }
 
       }));
+
+    }
+
+    private void PopupWindowLinkClick_OnEvent(object sender, IControlHtmlEventArgs obj, int x, int y, int w, int h, HtmlPopup popup)
+    {
+
+      var ev = obj.EventObj;
+
+
+      var srcElement = ev.srcElement;
+      if (srcElement.tagName.ToLower() != "a")
+        return;
+
+      var linkElement = srcElement as IHTMLAnchorElement;
+      string url = linkElement?.href;
+      if (url.IsNullOrEmpty())
+        return;
+
+      var provider = MatchContentProvider(url);
+      if (provider.IsNull())
+        return;
+
+      bool ctrlPressed = ev.ctrlKey;
+      Action action = null;
+
+      if (ctrlPressed)
+      {
+
+        if (popup.IsNull())
+          return;
+
+        x = x + w;
+        var doc = popup.GetDocument();
+        var wdw = Application.Current.Dispatcher.Invoke(() => doc.parentWindow);
+
+        action = () =>
+        {
+          // TODO: This will mess up the events
+          OpenNewPopupWdw((IHTMLWindow4)wdw, url, provider, new RemoteCancellationToken(new CancellationToken()), x, y);
+        };
+
+      }
+      else 
+      {
+        var wdw = Application.Current.Dispatcher.Invoke(() => ContentUtils.GetFocusedHtmlWindow());
+
+        action = () =>
+        {
+          OpenNewPopupWdw((IHTMLWindow4)wdw, url, provider, new RemoteCancellationToken(new CancellationToken()), x, y);
+        };
+      }
+
+      EventQueue.Enqueue(action);
 
     }
 
@@ -330,8 +431,25 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     }
 
-    private void PopupBrowserButtonClick_OnEvent(object sender, IControlHtmlEventArgs e)
+    private void PopupBrowserButtonClick_OnEvent(object sender, IControlHtmlEventArgs e, string query)
     {
+
+      if (_popupWindowSvc.IsNull())
+        return;
+
+      Action action = () =>
+      {
+
+        try
+        {
+          _popupWindowSvc.Open(query, ContentType.Article);
+        }
+        catch (RemotingException) { }
+
+      };
+
+      EventQueue.Enqueue(action);
+
     }
 
     private void ExtractButtonClick_OnEvent(object sender, IControlHtmlEventArgs e, PopupContent content, HtmlPopup popup)
@@ -421,7 +539,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       }
     }
 
-    public bool RegisterProvider(string name, List<string> urlRegexes, IContentProvider provider)
+    public bool RegisterProvider(string name, List<string> urlRegexes, IMouseoverContentProvider provider)
     {
 
       if (string.IsNullOrEmpty(name))

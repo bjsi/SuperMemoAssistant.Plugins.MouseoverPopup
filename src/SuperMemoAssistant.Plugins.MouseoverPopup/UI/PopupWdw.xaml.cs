@@ -28,7 +28,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup.UI
     public bool IsClosed { get; set; }
     public RemoteCancellationToken ct { get; set; }
 
-    public PopupWdw(string url, IContentProvider provider, RemoteCancellationToken ct)
+    public PopupWdw(string url, IMouseoverContentProvider provider, RemoteCancellationToken ct)
     {
       InitializeComponent();
       Closed += (sender, args) => IsClosed = true;
@@ -52,7 +52,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup.UI
       string href = element.GetAttribute("href");
     }
 
-    private async Task FetchHtml(string url, IContentProvider provider, RemoteCancellationToken ct)
+    private async Task FetchHtml(string url, IMouseoverContentProvider provider, RemoteCancellationToken ct)
     {
       var content = await provider.FetchHtml(ct, url);
       if (string.IsNullOrEmpty(content.Html))

@@ -13,7 +13,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
   public class MouseoverService : PerpetualMarshalByRefObject, IMouseoverSvc
   {
 
-    public bool RegisterProvider(string name, List<string> urlRegexes, IContentProvider provider)
+    public bool RegisterProvider(string name, List<string> urlRegexes, IMouseoverContentProvider provider)
     {
 
       if (name.IsNullOrEmpty())
