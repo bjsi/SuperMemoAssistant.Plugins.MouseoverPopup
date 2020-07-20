@@ -1,4 +1,5 @@
-﻿using mshtml;
+﻿using MouseoverPopup.Interop;
+using mshtml;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -8,30 +9,54 @@ using System.Threading.Tasks;
 
 namespace SuperMemoAssistant.Plugins.MouseoverPopup
 {
-  public static class PopupEx
+
+  public class HtmlPopup
   {
-    public static IHTMLPopup CreatePopup()
+
+    private IHTMLPopup _popup { get; set; }
+
+    public event EventHandler<HtmlPopupEventArgs> OnShow;
+
+    public HtmlPopup(IHTMLWindow4 wdw)
     {
-      try
-      {
-
-        var wdw = ContentUtils.GetFocusedHtmlWindow() as IHTMLWindow4;
-        var popup = wdw?.createPopup() as IHTMLPopup;
-
-        // Styling
-        var doc = popup?.document as IHTMLDocument2;
-        if (!doc.IsNull())
-          doc.body.style.border = "solid black 1px";
-
-        return popup;
-
-      }
-      catch (RemotingException) { }
-      catch (UnauthorizedAccessException) { }
-
-      return null;
+      _popup = wdw?.createPopup() as IHTMLPopup;
     }
 
+    public void Show(int screenX, int screenY, int w, int h)
+    {
 
+      if (_popup.IsNull())
+        return;
+
+      _popup.Show(screenX, screenY, w, h, null);
+      OnShow?.Invoke(this, new HtmlPopupEventArgs(screenX, screenY, w, h));
+
+    }
+
+    public bool IsOpen()
+    {
+      return _popup.IsNull()
+        ? false
+        : _popup.isOpen;
+    }
+
+    public void Hide()
+    {
+      _popup.Hide();
+    }
+
+    public IHTMLDocument2 GetDocument()
+    {
+      return _popup?.document as IHTMLDocument2;
+    }
+
+  }
+
+  public static class PopupEx
+  {
+    public static HtmlPopup CreatePopup(this IHTMLWindow4 wdw)
+    {
+      return new HtmlPopup(wdw);
+    }
   }
 }

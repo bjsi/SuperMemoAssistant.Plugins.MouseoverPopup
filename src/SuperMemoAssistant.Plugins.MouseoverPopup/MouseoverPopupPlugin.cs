@@ -84,21 +84,23 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     /// Service that providers can call to register themselves.
     /// </summary>
     private MouseoverService _mouseoverSvc { get; set; }
-    private HTMLControlEvents htmlDocEvents { get; set; }
-    private PopupWdw CurrentWdw { get; set; } = null;
 
+    /// <summary>
+    /// HtmlDocumentEvents
+    /// TODO: Refactor
+    /// </summary>
+    private HTMLControlEvents htmlDocEvents { get; set; }
+
+    // Popup window events
     private HtmlEvent ExtractButtonClick { get; set; }
     private HtmlEvent PopupBrowserButtonClick { get; set; }
     private HtmlEvent GotoElementButtonClick { get; set; }
 
-
-    private IHTMLPopup CurrentPopup { get; set; }
-
-    public MouseoverPopupCfg Config;
-    public PopupContent CurrentContent { get; set; }
-
+    // Used to run certain actions off of the UI thread
+    // eg. item creation - otherwise will result in deadlock
     private EventfulConcurrentQueue<Action> EventQueue = new EventfulConcurrentQueue<Action>();
 
+    public MouseoverPopupCfg Config;
     #endregion
 
     #region Methods Impl
@@ -120,7 +122,9 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
       SubscribeToMouseoverEvents();
 
+      // Runs the actions added to the event queue
       _ = Task.Factory.StartNew(DispatchEvents, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+
     }
 
     private void DispatchEvents()
@@ -149,18 +153,23 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     private async void HtmlDocEvents_OnMouseOverEvent(object sender, IHTMLControlEventArgs e)
     {
-      var ev = e.EventObj;
-      var x = ev.clientX;
-      var y = ev.clientY;
 
-      var link = e.EventObj.srcElement as IHTMLAnchorElement;
-      string url = link?.href;
+      var ev = e.EventObj;
+
+      // Coordinates
+      var x = ev.screenX;
+      var y = ev.screenY;
+
+      var linkElement = e.EventObj.srcElement as IHTMLAnchorElement;
+      string url = linkElement?.href;
+
       if (url.IsNullOrEmpty())
         return;
 
-      if (CurrentWdw != null && !CurrentWdw.IsClosed)
+      if (providers.IsNull() || providers.Count == 0)
         return;
 
+      // Find the matching provider
       foreach (var keyValuePair in providers)
       {
         var regexes = keyValuePair.Value.urlRegexes;
@@ -175,6 +184,9 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     private async Task OpenNewPopupWdw(string url, IContentProvider provider, RemoteCancellationToken ct, int x, int y)
     {
+
+      if (url.IsNullOrEmpty() || provider.IsNull())
+        return;
 
       // Get html
       PopupContent content = await provider.FetchHtml(ct, url);
@@ -191,48 +203,62 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
           if (wdw.IsNull())
             return;
 
-          var body = ((IHTMLWindow2)wdw).document?.body;
-          CurrentPopup = wdw?.createPopup() as IHTMLPopup;
-          var doc = ((IHTMLDocument2)CurrentPopup?.document);
-          if (doc.IsNull())
+          var htmlDoc = ((IHTMLWindow2)wdw).document;
+          if (htmlDoc.IsNull())
             return;
 
-          doc.body.style.border = "solid black 1px";
-          doc.body.style.overflow = "scroll";
-          doc.body.style.margin = "5px";
-          doc.body.innerHTML = content.Html;
+          var htmlCtrlBody = htmlDoc.body;
+          if (htmlCtrlBody.IsNull())
+            return;
 
+          var popup = wdw.CreatePopup();
+          popup.OnShow += (sender, args) => _mouseoverSvc?.InvokeOnShow(sender, args);
+          if (popup.IsNull())
+            return;
+
+          var popupDoc = popup.GetDocument();
+          if (popupDoc.IsNull())
+            return;
+
+          // Popup Styling
+          popupDoc.body.style.border = "solid black 1px";
+          popupDoc.body.style.overflow = "scroll";
+          popupDoc.body.style.margin = "7px";
+          popupDoc.body.innerHTML = content.Html;
+
+          // Extract Button
           if (content.AllowExtract)
           {
 
             // TODO: Add extract icon to button
             // Create Extract button
-            var extractBtn = doc.createElement("<button>");
+            var extractBtn = popupDoc.createElement("<button>");
             extractBtn.id = "extract-btn";
             extractBtn.innerText = "Extract";
             extractBtn.style.margin = "5px";
 
             // Add extract button
-            ((IHTMLDOMNode)doc.body).appendChild((IHTMLDOMNode)extractBtn);
+            ((IHTMLDOMNode)popupDoc.body).appendChild((IHTMLDOMNode)extractBtn);
 
             // Add click event
             ExtractButtonClick = new HtmlEvent();
             ((IHTMLElement2)extractBtn).SubscribeTo(EventType.onclick, ExtractButtonClick);
-            ExtractButtonClick.OnEvent += ExtractButtonClick_OnEvent;
+            ExtractButtonClick.OnEvent += (sender, e) => ExtractButtonClick_OnEvent(sender, e, content, popup);
 
           }
 
+          // Goto Element Button
           if (content.AllowGotoInSM)
           {
 
             // Create goto element button
-            var gotobutton = doc.createElement("<button>");
+            var gotobutton = popupDoc.createElement("<button>");
             gotobutton.id = "goto-btn";
             gotobutton.innerText = "Goto Element";
             gotobutton.style.margin = "5px";
 
             // Add Goto button
-            ((IHTMLDOMNode)doc.body).appendChild((IHTMLDOMNode)gotobutton);
+            ((IHTMLDOMNode)popupDoc.body).appendChild((IHTMLDOMNode)gotobutton);
 
             // Add click event
             GotoElementButtonClick = new HtmlEvent();
@@ -245,13 +271,13 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
           {
 
             // Create browser button
-            var browserBtn = doc.createElement("<button>");
+            var browserBtn = popupDoc.createElement("<button>");
             browserBtn.id = "browser-btn";
             browserBtn.innerText = "Popup Browser";
             browserBtn.style.margin = "5px";
 
             // Create open button
-            ((IHTMLDOMNode)doc.body).appendChild((IHTMLDOMNode)browserBtn);
+            ((IHTMLDOMNode)popupDoc.body).appendChild((IHTMLDOMNode)browserBtn);
 
             // Add click event
             PopupBrowserButtonClick = new HtmlEvent();
@@ -260,9 +286,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
           }
 
-          // TODO: How to size to content?
-          CurrentContent = content;
-          CurrentPopup.Show(x, y, 350, 350, body);
+          popup.Show(x, y, 350, 350);
 
         }
         catch (RemotingException) { }
@@ -281,6 +305,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       if (Svc.SM.Registry.Element[elementId].IsNull())
         return;
 
+      // Pass to the event queue to avoid deadlock issues
       Action action = () =>
       {
 
@@ -297,27 +322,39 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     {
     }
 
-    private void ExtractButtonClick_OnEvent(object sender, IControlHtmlEventArgs e)
+    private void ExtractButtonClick_OnEvent(object sender, IControlHtmlEventArgs e, PopupContent content, HtmlPopup popup)
     {
+
+      ExtractType type = ExtractType.Full;
+
+      if (popup.IsNull() || content.IsNull())
+        return;
+
+      var htmlDoc = popup.GetDocument();
+      if (htmlDoc.IsNull())
+        return;
+      
+      var sel = htmlDoc?.selection;
+      var selObj = sel?.createRange() as IHTMLTxtRange;
+
+      if (!selObj.IsNull() && !selObj.htmlText.IsNullOrEmpty())
+        type = ExtractType.Full;
+      else
+        type = ExtractType.Partial;
+
+
+      // Create an action to be passed to the event thread
+      // Running on the main UI thread causes deadlock
+
       Action action = () => {
 
-        if (CurrentPopup.IsNull())
-          return;
+        // Extract the whole popup document
+        if (type == ExtractType.Full)
+          CreateSMExtract(content.Html, content.References);
 
-        var htmlDoc = CurrentPopup?.document as IHTMLDocument2;
-
-        var sel = htmlDoc?.selection;
-        var selObj = sel?.createRange() as IHTMLTxtRange;
-        if (selObj.IsNull() || selObj.text.IsNullOrEmpty())
-        {
-          // Extract the whole popup document
-          CreateSMExtract(CurrentContent.Html);
-        }
-        else
-        {
-          // Extract selected html
-          CreateSMExtract(selObj.htmlText);
-        }
+        // Extract selected html
+        else if (type == ExtractType.Partial)
+          CreateSMExtract(selObj.htmlText, content.References);
 
       };
 
@@ -326,7 +363,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     }
 
-    private void CreateSMExtract(string extract)
+    private void CreateSMExtract(string extract, References refs)
     {
 
       if (extract.IsNullOrEmpty())
@@ -356,9 +393,9 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
           .WithLayout("Article")
           .WithPriority(priority)
           .WithReference(r =>
-            r.WithLink(CurrentContent.References.Link)
-             .WithSource(CurrentContent.References.Source)
-             .WithTitle(CurrentContent.References.Title)
+            r.WithLink(refs.Link)
+             .WithSource(refs.Source)
+             .WithTitle(refs.Title)
           )
           .DoNotDisplay()
       );
