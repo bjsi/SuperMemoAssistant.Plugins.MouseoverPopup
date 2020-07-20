@@ -33,6 +33,25 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     }
 
+    public int GetOffsetHeight(int width)
+    {
+
+      if (_popup.IsNull())
+        return -1;
+
+      var doc = _popup.document as IHTMLDocument2;
+      var body = doc?.body;
+      if (body.IsNull())
+        return -1;
+
+      _popup.Show(0, 0, width, 1, null);
+      int height = ((IHTMLElement2)body).scrollHeight;
+      _popup.Hide();
+
+      return height;
+
+    }
+
     public bool IsOpen()
     {
       return _popup.IsNull()

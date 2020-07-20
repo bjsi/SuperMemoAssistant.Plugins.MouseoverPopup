@@ -151,16 +151,16 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       htmlDocEvents.OnMouseEnterEvent += HtmlDocEvents_OnMouseOverEvent;
     }
 
-    private async void HtmlDocEvents_OnMouseOverEvent(object sender, IHTMLControlEventArgs e)
+    private async void HtmlDocEvents_OnMouseOverEvent(object sender, IHTMLControlEventArgs obj)
     {
 
-      var ev = e.EventObj;
+      var ev = obj.EventObj;
 
       // Coordinates
       var x = ev.screenX;
       var y = ev.screenY;
 
-      var linkElement = e.EventObj.srcElement as IHTMLAnchorElement;
+      var linkElement = obj.EventObj.srcElement as IHTMLAnchorElement;
       string url = linkElement?.href;
 
       if (url.IsNullOrEmpty())
@@ -178,6 +178,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         if (regexes.Any(r => new Regex(r).Match(url).Success))
         {
           await OpenNewPopupWdw(url, provider, new RemoteCancellationToken(new CancellationToken()), x, y);
+          break;
         }
       }
     }
@@ -222,7 +223,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
           // Popup Styling
           popupDoc.body.style.border = "solid black 1px";
-          popupDoc.body.style.overflow = "scroll";
+          //popupDoc.body.style.overflow = "scroll";
           popupDoc.body.style.margin = "7px";
           popupDoc.body.innerHTML = content.Html;
 
@@ -276,6 +277,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
             browserBtn.innerText = "Popup Browser";
             browserBtn.style.margin = "5px";
 
+
             // Create open button
             ((IHTMLDOMNode)popupDoc.body).appendChild((IHTMLDOMNode)browserBtn);
 
@@ -286,7 +288,17 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
           }
 
-          popup.Show(x, y, 350, 350);
+          int maxheight = 400;
+          int width = 300;
+          int height = popup.GetOffsetHeight(width) + 10;
+
+          if (height > maxheight)
+          {
+            height = maxheight;
+            popupDoc.body.style.overflow = "scroll";
+          }
+
+          popup.Show(x, y, width, height);
 
         }
         catch (RemotingException) { }
@@ -341,7 +353,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         type = ExtractType.Full;
       else
         type = ExtractType.Partial;
-
 
       // Create an action to be passed to the event thread
       // Running on the main UI thread causes deadlock
