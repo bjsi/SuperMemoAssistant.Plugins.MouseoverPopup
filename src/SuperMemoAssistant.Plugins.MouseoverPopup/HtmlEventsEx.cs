@@ -10,6 +10,71 @@ using System.Threading.Tasks;
 
 namespace SuperMemoAssistant.Plugins.MouseoverPopup
 {
+  public enum EventType
+  {
+
+    onkeydown,
+    onclick,
+    ondblclick,
+    onkeypress,
+    onkeyup,
+    onmousedown,
+    onmousemove,
+    onmouseout,
+    onmouseover,
+    onmouseup,
+    onselectstart,
+    onbeforecopy,
+    onbeforecut,
+    onbeforepaste,
+    oncontextmenu,
+    oncopy,
+    oncut,
+    ondrag,
+    ondragstart,
+    ondragend,
+    ondragenter,
+    ondragleave,
+    ondragover,
+    ondrop,
+    onfocus,
+    onlosecapture,
+    onpaste,
+    onpropertychange,
+    onreadystatechange,
+    onresize,
+    onactivate,
+    onbeforedeactivate,
+    oncontrolselect,
+    ondeactivate,
+    onmouseenter,
+    onmouseleave,
+    onmove,
+    onmoveend,
+    onmovestart,
+    onpage,
+    onresizeend,
+    onresizestart,
+    onfocusin,
+    onfocusout,
+    onmousewheel,
+    onbeforeeditfocus,
+    onafterupdate,
+    onbeforeupdate,
+    ondataavailable,
+    ondatasetchanged,
+    ondatasetcomplete,
+    onerrorupdate,
+    onfilterchange,
+    onhelp,
+    onrowenter,
+    onrowexit,
+    onlayoutcomplete,
+    onblur,
+    onrowsdelete,
+    onrowsinserted,
+
+  }
 
   public interface IControlHtmlEvent
   {
@@ -31,6 +96,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     }
   }
 
+  [Serializable]
   public class IControlHtmlEventArgs
   {
     public IHTMLEventObj EventObj { get; set; }

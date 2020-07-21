@@ -29,5 +29,18 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     }
 
+    /// <summary>
+    /// Get the IHTMLDocument2 object representing the focused html control of the current element.
+    /// </summary>
+    /// <returns>IHTMLDocument2 object or null</returns>
+    public static IHTMLDocument2 GetFocusedHtmlDocument()
+    {
+
+      var ctrlGroup = Svc.SM.UI.ElementWdw.ControlGroup;
+      var htmlCtrl = ctrlGroup?.FocusedControl?.AsHtml();
+      return htmlCtrl?.GetDocument();
+
+    }
+
   }
 }
