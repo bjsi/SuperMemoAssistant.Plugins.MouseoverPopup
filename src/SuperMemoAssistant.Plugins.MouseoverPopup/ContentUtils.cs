@@ -1,5 +1,6 @@
 ﻿using mshtml;
 using SuperMemoAssistant.Extensions;
+using SuperMemoAssistant.Interop.SuperMemo.Content.Controls;
 using SuperMemoAssistant.Services;
 using System;
 using System.Collections.Generic;
@@ -19,13 +20,19 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     public static IHTMLWindow2 GetFocusedHtmlWindow()
     {
 
-      var ctrlGroup = Svc.SM.UI.ElementWdw.ControlGroup;
-      var htmlCtrl = ctrlGroup?.FocusedControl?.AsHtml();
-      var htmlDoc = htmlCtrl?.GetDocument();
-      if (htmlDoc == null)
-        return null;
+      try
+      {
+        var ctrlGroup = Svc.SM.UI.ElementWdw.ControlGroup;
+        var htmlCtrl = ctrlGroup?.FocusedControl?.AsHtml();
+        var htmlDoc = htmlCtrl?.GetDocument();
+        if (htmlDoc == null)
+          return null;
 
-      return htmlDoc.parentWindow;
+        return htmlDoc.parentWindow;
+      }
+      catch (UnauthorizedAccessException) { }
+
+      return null;
 
     }
 
@@ -42,5 +49,33 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     }
 
+    public static IControlHtml GetFirstHtmlCtrl()
+    {
+
+      var ctrlGroup = Svc.SM.UI.ElementWdw.ControlGroup;
+      return ctrlGroup?.GetFirstHtmlControl()?.AsHtml();
+
+    }
+
+    public static Dictionary<int, IControlHtml> GetHtmlCtrls()
+    {
+
+      var ret = new Dictionary<int, IControlHtml>();
+
+      var ctrlGroup = Svc.SM.UI.ElementWdw.ControlGroup;
+      if (ctrlGroup.IsNull())
+        return ret;
+
+      for (int i = 0; i < ctrlGroup.Count; i++)
+      {
+        var htmlCtrl = ctrlGroup[i].AsHtml();
+        if (htmlCtrl.IsNull())
+          continue;
+        ret.Add(i, htmlCtrl);
+      }
+
+      return ret;
+
+    }
   }
 }

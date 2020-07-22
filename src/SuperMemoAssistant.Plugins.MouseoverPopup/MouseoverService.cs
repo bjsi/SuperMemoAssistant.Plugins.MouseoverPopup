@@ -13,7 +13,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
   public class MouseoverService : PerpetualMarshalByRefObject, IMouseoverSvc
   {
 
-    public bool RegisterProvider(string name, List<string> urlRegexes, IMouseoverContentProvider provider)
+    public bool RegisterProvider(string name, List<string> urlRegexes, Dictionary<string, string> keywordUrlMap, ReferenceRegexes referenceRegexes, string[] categoryPathRegexes, IMouseoverContentProvider provider)
     {
 
       if (name.IsNullOrEmpty())
@@ -25,7 +25,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       if (provider.IsNull())
         return false;
 
-      return Svc<MouseoverPopupPlugin>.Plugin.RegisterProvider(name, urlRegexes, provider);
+      return Svc<MouseoverPopupPlugin>.Plugin.RegisterProvider(name, urlRegexes, keywordUrlMap, referenceRegexes, categoryPathRegexes, provider);
 
     }
 

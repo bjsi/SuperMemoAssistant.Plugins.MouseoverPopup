@@ -44,14 +44,17 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
   using System.Threading.Tasks;
   using System.Windows;
   using Anotar.Serilog;
+  using Ganss.Text;
   using global::MouseoverPopup.Interop;
   using mshtml;
   using SuperMemoAssistant.Extensions;
   using SuperMemoAssistant.Interop.Plugins;
   using SuperMemoAssistant.Interop.SuperMemo.Content.Contents;
+  using SuperMemoAssistant.Interop.SuperMemo.Content.Controls;
   using SuperMemoAssistant.Interop.SuperMemo.Core;
   using SuperMemoAssistant.Interop.SuperMemo.Elements.Builders;
   using SuperMemoAssistant.Interop.SuperMemo.Elements.Models;
+  using SuperMemoAssistant.Interop.SuperMemo.Elements.Types;
   using SuperMemoAssistant.Plugins.MouseoverPopup.Models;
   using SuperMemoAssistant.Plugins.PopupWindow.Interop;
   using SuperMemoAssistant.Services;
@@ -93,6 +96,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     /// </summary>
     private IPopupWindowSvc _popupWindowSvc { get; set; }
 
+    // HtmlDoc events
     private HtmlEvent AnchorElementMouseLeave { get; set; }
     private HtmlEvent MouseEnterEvent { get; set; }
 
@@ -107,7 +111,15 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     // eg. item creation - otherwise will result in deadlock
     private EventfulConcurrentQueue<Action> EventQueue = new EventfulConcurrentQueue<Action>();
 
+    // Fast keyword search data structure
+    private AhoCorasick Keywords { get; set; }
+
+    private const int MaxTextLength = 2000000000;
+
     public MouseoverPopupCfg Config;
+
+    private bool HasExited = false;
+
     #endregion
 
     #region Methods Impl
@@ -127,14 +139,57 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
       _popupWindowSvc = GetService<IPopupWindowSvc>();
 
-      Svc.SM.UI.ElementWdw.OnElementChanged += new ActionProxy<SMDisplayedElementChangedEventArgs>(ElementWdw_OnElementChanged);
+      Svc.SM.UI.ElementWdw.OnElementChanged += new ActionProxy<SMDisplayedElementChangedEventArgs>(OnElementChanged);
 
       // Runs the actions added to the event queue
       _ = Task.Factory.StartNew(DispatchEvents, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
 
     }
 
-    private void ElementWdw_OnElementChanged(SMDisplayedElementChangedEventArgs obj)
+    protected override void Dispose(bool disposing)
+    {
+
+      HasExited = true;
+      base.Dispose(disposing);
+
+    }
+
+    private void OnElementChanged(SMDisplayedElementChangedEventArgs obj)
+    {
+
+      var matchingProviders = MatchProvidersAgainstCurrentElement();
+      if (matchingProviders.IsNull() || !matchingProviders.Any())
+        return;
+
+      CreateKeywords(matchingProviders);
+
+      ScanForKeywords(matchingProviders);
+
+      SubscribeToHtmlDocEvents(matchingProviders);
+
+    }
+
+    private Dictionary<string, ContentProviderInfo> MatchProvidersAgainstCurrentElement()
+    {
+
+      var ret = new Dictionary<string, ContentProviderInfo>();
+
+      if (providers.IsNull() || !providers.Any())
+        return ret;
+
+      foreach (var provider in providers)
+      {
+
+        if (MatchProviderAgainstCurrentElement(provider.Value))
+          ret.Add(provider.Key, provider.Value);
+
+      }
+
+      return ret;
+
+    }
+
+    private void SubscribeToHtmlDocEvents(Dictionary<string, ContentProviderInfo> matchedProviders)
     {
 
       var htmlDoc = ContentUtils.GetFocusedHtmlDocument();
@@ -148,11 +203,182 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
          ?.Where(x => x.tagName.ToLowerInvariant() == "a")
          ?.ForEach(x => ((IHTMLElement2)x).SubscribeTo(EventType.onmouseenter, MouseEnterEvent));
 
-      MouseEnterEvent.OnEvent += MouseEnterEvent_OnEvent;
+
+      // TODO: Matching providers like this won't handle text changes well
+      // Only refreshes on element changed events
+
+      MouseEnterEvent.OnEvent += (sender, args) => MouseEnterEvent_OnEvent(sender, args, matchedProviders);
 
     }
 
-    private async void MouseEnterEvent_OnEvent(object sender, IControlHtmlEventArgs obj)
+    private bool MatchAgainstCurrentReferences(ReferenceRegexes refRegexes)
+    {
+
+      var htmlCtrl = ContentUtils.GetFirstHtmlCtrl();
+      string text = htmlCtrl?.Text;
+      if (text.IsNullOrEmpty())
+        return false;
+
+      var refs = ReferenceParser.GetReferences(htmlCtrl?.Text);
+      if (refs.IsNull())
+        return false;
+
+      else if (MatchAgainstRegexes(refs.Source, refRegexes.SourceRegexes))
+        return true;
+
+      else if (MatchAgainstRegexes(refs.Link, refRegexes.LinkRegexes))
+        return true;
+
+      if (MatchAgainstRegexes(refs.Title, refRegexes.TitleRegexes))
+        return true;
+
+      else if (MatchAgainstRegexes(refs.Author, refRegexes.AuthorRegexes))
+        return true;
+
+      return false;
+
+    }
+
+    private bool MatchAgainstRegexes(string input, string[] regexes)
+    {
+
+      if (input.IsNullOrEmpty())
+        return false;
+
+      if (regexes.IsNull() || !regexes.Any())
+        return false;
+
+      if (regexes.Any(r => new Regex(r).Match(input).Success))
+        return true;
+
+      return false;
+
+    }
+
+    private bool MatchAgainstCategoryPath(IElement element, string[] regexes)
+    {
+
+      if (element.IsNull())
+        return false;
+
+      var cur = element.Parent;
+      while (!cur.IsNull())
+      {
+        if (cur.Type == ElementType.ConceptGroup)
+        {
+
+          // TODO: Check that this works
+          var concept = Svc.SM.Registry.Concept[cur.Id];
+          string name = concept.Name;
+
+          if (!concept.IsNull() && regexes.Any(x => new Regex(x).Match(name).Success))
+            return true;
+
+        }
+        cur = cur.Parent;
+      }
+
+      return false;
+
+    }
+
+    private bool MatchProviderAgainstCurrentElement(ContentProviderInfo providerInfo)
+    {
+
+      var element = Svc.SM.UI.ElementWdw.CurrentElement;
+      if (element.IsNull())
+        return false;
+
+      var referenceRegexes = providerInfo.referenceRegexes;
+      var categoryPathRegexes = providerInfo.CategoryPathRegexes;
+
+      return MatchAgainstCategoryPath(element, categoryPathRegexes) || MatchAgainstCurrentReferences(referenceRegexes);
+
+    }
+
+    private void ScanForKeywords(Dictionary<string, ContentProviderInfo> providers)
+    {
+
+      var htmlCtrls = ContentUtils.GetHtmlCtrls();
+      if (htmlCtrls.IsNull() || !htmlCtrls.Any())
+        return;
+
+      foreach (KeyValuePair<int, IControlHtml> kvpair in htmlCtrls)
+      {
+
+        var htmlCtrl = kvpair.Value;
+        var text = htmlCtrl?.Text?.ToLowerInvariant();
+        var htmlDoc = htmlCtrl?.GetDocument();
+        if (text.IsNullOrEmpty() || htmlDoc.IsNull())
+          continue;
+
+        var matches = Keywords.Search(text);
+        if (!matches.Any())
+          continue;
+
+        var orderedMatches = matches.OrderBy(x => x.Index);
+        var selObj = htmlDoc.selection?.createRange() as IHTMLTxtRange;
+        if (selObj.IsNull())
+          continue;
+
+        foreach (var match in orderedMatches)
+        {
+
+          string word = match.Word;
+          if (selObj.findText(word, Flags: 2)) // Match whole words only TODO: Test this
+          {
+
+            var parentEl = selObj.parentElement();
+            if (!parentEl.IsNull())
+            {
+              if (parentEl.tagName.ToLowerInvariant() == "a")
+                continue;
+            }
+            else
+            {
+
+              string href = null;
+              foreach (var provider in providers)
+              {
+                if (provider.Value.keywordUrlMap.TryGetValue(word, out href))
+                  break;
+              }
+
+              if (href.IsNull())
+                return;
+
+              //selObj.pasteHTML($"<a href='{href}'>{selObj.text}<a>");
+
+            }
+
+          }
+
+          selObj.collapse(false);
+          selObj.moveEnd("character", MaxTextLength);
+
+        }
+      }
+    }
+
+    private void CreateKeywords(Dictionary<string, ContentProviderInfo> providers)
+    {
+
+      Keywords = new AhoCorasick();
+
+      foreach (var provider in providers)
+      {
+        
+        var words = provider.Value.keywordUrlMap?.Keys;
+        if (words.IsNull() || !words.Any())
+          continue;
+
+        Keywords.Add(words);
+
+      }
+
+    }
+
+    private async void MouseEnterEvent_OnEvent(object sender, IControlHtmlEventArgs obj, Dictionary<string, ContentProviderInfo> potentialProviders)
     {
 
       var ev = obj.EventObj;
@@ -162,16 +388,18 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       var y = ev.screenY;
 
       var anchor = obj.EventObj.srcElement as IHTMLAnchorElement;
-      string url = anchor?.href;
 
+      string url = anchor?.href;
       if (url.IsNullOrEmpty())
         return;
 
       if (providers.IsNull() || providers.Count == 0)
         return;
 
-      var provider = MatchContentProvider(url);
-      if (provider.IsNull())
+      string innerText = ((IHTMLElement)anchor).innerText;
+
+      var matchedProviders = MatchProvidersAgainstMouseoverLink(url, innerText, potentialProviders);
+      if (matchedProviders.IsNull() || !matchedProviders.Any())
         return;
 
       var parentWdw = Application.Current.Dispatcher.Invoke(() => ContentUtils.GetFocusedHtmlWindow());
@@ -179,16 +407,23 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         return;
 
       var linkElement = anchor as IHTMLElement2;
+      if (linkElement.IsNull())
+        return;
 
       // Add mouseleave event to cancel early
-      var rcts = new RemoteCancellationTokenSource();
+      var remoteCancellationToken = new RemoteCancellationTokenSource();
       AnchorElementMouseLeave = new HtmlEvent();
       linkElement.SubscribeTo(EventType.onmouseleave, AnchorElementMouseLeave);
-      AnchorElementMouseLeave.OnEvent += (sender, args) => rcts?.Cancel();
+      AnchorElementMouseLeave.OnEvent += (sender, args) => remoteCancellationToken?.Cancel();
 
       try
       {
-        await OpenNewPopupWdw((IHTMLWindow4)parentWdw, url, provider, rcts.Token, x, y);
+
+        if (matchedProviders.Count > 1)
+          await OpenChooseProviderMenu((IHTMLWindow4)parentWdw, url, innerText, matchedProviders, x, y);
+        else
+          await OpenNewPopupWdw((IHTMLWindow4)parentWdw, url, matchedProviders.First().Value.provider, remoteCancellationToken.Token, x, y);
+
       }
       catch (RemotingException) { }
 
@@ -196,38 +431,119 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     private void DispatchEvents()
     {
-      while (true)
+
+      while (!HasExited)
       {
         EventQueue.DataAvailableEvent.WaitOne(3000);
         while (EventQueue.TryDequeue(out var action))
         {
-          action();
+          try
+          {
+            action();
+          }
+          catch (RemotingException) { }
+          catch (Exception e) 
+          {
+            LogTo.Error($"Exception {e} caught in event dispatcher thread");
+          }
         }
       }
     }
 
-    private IMouseoverContentProvider MatchContentProvider(string url)
+    private Dictionary<string, ContentProviderInfo> MatchProvidersAgainstMouseoverLink(string url, string text, Dictionary<string, ContentProviderInfo> potentialProviders)
     {
 
-      if (url.IsNullOrEmpty())
+      if (url.IsNullOrEmpty() || text.IsNullOrEmpty() || potentialProviders.IsNull() || !potentialProviders.Any())
         return null;
 
-      if (providers.IsNull() || providers.Count == 0)
-        return null;
+      var ret = new Dictionary<string, ContentProviderInfo>();
 
-      // Find the matching provider
-      foreach (var keyValuePair in providers)
+      foreach (var provider in potentialProviders)
       {
-        var regexes = keyValuePair.Value.urlRegexes;
-        var provider = keyValuePair.Value.provider;
 
-        if (regexes.Any(r => new Regex(r).Match(url).Success))
+        var regexes = provider.Value.urlRegexes;
+
+        //var provider = keyValuePair.Value.provider;
+
+        if (regexes.Any(r => new Regex(r).Match(url).Success)
+         || provider.Value.keywordUrlMap.Keys.Any(x => x == text))
         {
-          return provider;
+          ret.Add(provider.Key, provider.Value);
         }
+
       }
 
       return null;
+
+    }
+
+    private async Task OpenChooseProviderMenu(IHTMLWindow4 parentWdw, string url, string text, Dictionary<string, ContentProviderInfo> providers, int x, int y)
+    {
+
+      if (url.IsNullOrEmpty())
+        return;
+
+      await Application.Current.Dispatcher.BeginInvoke((Action)(() =>
+      {
+
+        var htmlDoc = ((IHTMLWindow2)parentWdw).document;
+        var htmlCtrlBody = htmlDoc.body;
+        if (htmlCtrlBody.IsNull())
+          return;
+
+        var popup = parentWdw.CreatePopup();
+        popup.OnShow += (sender, args) => _mouseoverSvc?.InvokeOnShow(sender, args);
+        if (popup.IsNull())
+          return;
+
+        var popupDoc = popup.GetDocument();
+        if (popupDoc.IsNull())
+          return;
+
+        // Popup Styling
+        popupDoc.body.style.border = "solid black 1px";
+        //popupDoc.body.style.overflow = "scroll";
+        popupDoc.body.style.margin = "7px";
+
+        string choices = string.Empty;
+
+        foreach (var provider in providers)
+        {
+          choices += $"<li><a href='{provider.Value.keywordUrlMap[text.ToLowerInvariant()]}'>{text} ({provider.Key})</li>";
+        }
+
+        popupDoc.body.innerHTML = $@"
+            <html>
+              <body>
+                <h1>Mouseover Popup Menu</h1>
+                <ul>
+                  {choices}
+                </ul>
+              </body>
+            </html>";
+
+        int maxheight = 400;
+        int width = 300;
+        int height = popup.GetOffsetHeight(width) + 10;
+
+        if (height > maxheight)
+        {
+          height = maxheight;
+          popupDoc.body.style.overflow = "scroll";
+        }
+        else
+        {
+          popupDoc.body.style.overflow = "";
+        }
+
+        popup.Show(x, y, width, height);
+
+        // Popup links
+        PopupWindowLinkClick = new HtmlEvent();
+        ((IHTMLElement2)popupDoc.body).SubscribeTo(EventType.onclick, PopupWindowLinkClick);
+        PopupWindowLinkClick.OnEvent += (sender, args) => PopupWindowLinkClick_OnEvent(sender, args, x, y, width, height, popup);
+
+      }));
 
     }
 
@@ -419,7 +735,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
 
       var srcElement = ev.srcElement;
-      if (srcElement.tagName.ToLower() != "a")
+      if (srcElement.tagName.ToLowerInvariant() != "a")
         return;
 
       var linkElement = srcElement as IHTMLAnchorElement;
@@ -427,8 +743,10 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       if (url.IsNullOrEmpty())
         return;
 
-      var provider = MatchContentProvider(url);
-      if (provider.IsNull())
+      string innerText = ((IHTMLElement)linkElement).innerText;
+
+      var matchedProviders = MatchProvidersAgainstMouseoverLink(url, innerText, providers);
+      if (matchedProviders.IsNull())
         return;
 
       bool ctrlPressed = ev.ctrlKey;
@@ -440,25 +758,52 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         if (popup.IsNull())
           return;
 
-        x = x + w;
+        x += w;
         var doc = popup.GetDocument();
         var wdw = Application.Current.Dispatcher.Invoke(() => doc.parentWindow);
 
-        action = () =>
+        if (matchedProviders.Count == 1)
         {
-          // TODO: This will mess up the events
-          OpenNewPopupWdw((IHTMLWindow4)wdw, url, provider, new RemoteCancellationToken(new CancellationToken()), x, y);
-        };
 
+          action = () =>
+          {
+            OpenNewPopupWdw((IHTMLWindow4)wdw, url, matchedProviders.First().Value.provider, new RemoteCancellationToken(new CancellationToken()), x, y);
+          };
+
+        }
+        else
+        {
+
+          action = () =>
+          {
+            OpenChooseProviderMenu((IHTMLWindow4)wdw, url, innerText, matchedProviders, x, y);
+          };
+
+        }
       }
       else 
       {
         var wdw = Application.Current.Dispatcher.Invoke(() => ContentUtils.GetFocusedHtmlWindow());
 
-        action = () =>
+        if (matchedProviders.Count == 1)
         {
-          OpenNewPopupWdw((IHTMLWindow4)wdw, url, provider, new RemoteCancellationToken(new CancellationToken()), x, y);
-        };
+
+          action = () =>
+          {
+            OpenNewPopupWdw((IHTMLWindow4)wdw, url, matchedProviders.First().Value.provider, new RemoteCancellationToken(new CancellationToken()), x, y);
+          };
+
+        }
+        else
+        {
+
+          action = () =>
+          {
+            OpenChooseProviderMenu((IHTMLWindow4)wdw, url, innerText, matchedProviders, x, y);
+          };
+
+        }
+
       }
 
       EventQueue.Enqueue(action);
@@ -490,21 +835,33 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     private void PopupBrowserButtonClick_OnEvent(object sender, IControlHtmlEventArgs e, string query)
     {
 
-      if (_popupWindowSvc.IsNull())
-        return;
-
-      Action action = () =>
+      // Open inside popupWindow if available
+      if (!_popupWindowSvc.IsNull())
       {
 
+        Action action = () =>
+        {
+
+          try
+          {
+            _popupWindowSvc.Open(query, ContentType.Article);
+          }
+          catch (RemotingException) { }
+
+        };
+
+        EventQueue.Enqueue(action);
+      }
+
+      // Open in the user's default browser
+      else
+      {
         try
         {
-          _popupWindowSvc.Open(query, ContentType.Article);
+          Process.Start(query);
         }
-        catch (RemotingException) { }
-
-      };
-
-      EventQueue.Enqueue(action);
+        catch (Exception) { }
+      }
 
     }
 
@@ -545,7 +902,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
       EventQueue.Enqueue(action);
 
-
     }
 
     private void CreateSMExtract(string extract, References refs)
@@ -567,16 +923,13 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         return;
       }
 
-      // Config.Defautl
-      double priority = 30;
-
       bool ret = Svc.SM.Registry.Element.Add(
         out var value,
         ElemCreationFlags.ForceCreate,
         new ElementBuilder(ElementType.Topic, contents.ToArray())
           .WithParent(currentElement)
           .WithLayout("Article")
-          .WithPriority(priority)
+          .WithPriority(Config.DefaultPriority)
           .WithReference(r =>
             r.WithLink(refs.Link)
              .WithSource(refs.Source)
@@ -595,7 +948,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       }
     }
 
-    public bool RegisterProvider(string name, List<string> urlRegexes, IMouseoverContentProvider provider)
+    public bool RegisterProvider(string name, List<string> urlRegexes, Dictionary<string, string> keywordUrlMap, ReferenceRegexes referenceRegexes, string[] categoryPathRegexes, IMouseoverContentProvider provider)
     {
 
       if (string.IsNullOrEmpty(name))
@@ -607,7 +960,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       if (providers.ContainsKey(name))
         return false;
 
-      providers[name] = new ContentProviderInfo(urlRegexes, provider);
+      providers[name] = new ContentProviderInfo(urlRegexes, keywordUrlMap, referenceRegexes, categoryPathRegexes, provider);
       return true;
 
     }

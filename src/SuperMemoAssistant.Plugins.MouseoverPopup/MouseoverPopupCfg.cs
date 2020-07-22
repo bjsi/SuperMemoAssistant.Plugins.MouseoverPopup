@@ -32,13 +32,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     [Text(@"- Preview link content in a popup window.
 - Publishes itself as a service to enable integration with other plugins.")]
 
-    [Heading("General Settings")]
-
-    [Field(Name = "Block SM default url click behaviour?")]
-    public bool BlockUrlMouseClick { get; set; } = true;
-
-    [Field(Name = "Highlight targetted urls")]
-    public bool HighlightUrls { get; set; } = true;
+    [Heading("Extraction Settings")]
 
     [Field(Name = "Default Popup Extract Priority (%)")]
     [Value(Must.BeGreaterThanOrEqualTo,
