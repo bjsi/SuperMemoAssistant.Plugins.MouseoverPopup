@@ -137,9 +137,9 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
           // TODO: Check that this works
           var concept = Svc.SM.Registry.Concept[cur.Id];
-          string name = concept.Name;
+          string name = concept?.Name;
 
-          if (!concept.IsNull() && regexes.Any(x => new Regex(x).Match(name).Success))
+          if (!name.IsNullOrEmpty() && regexes.Any(x => new Regex(x).Match(name).Success))
             return true;
 
         }

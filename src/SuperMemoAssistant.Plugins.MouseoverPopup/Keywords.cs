@@ -1,4 +1,5 @@
 ﻿using Ganss.Text;
+using HtmlAgilityPack;
 using mshtml;
 using SuperMemoAssistant.Extensions;
 using SuperMemoAssistant.Interop.SuperMemo.Content.Controls;
@@ -33,12 +34,15 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
         var htmlCtrl = kvpair.Value;
         var htmlDoc = htmlCtrl?.GetDocument();
-        var text = htmlDoc?.body?.innerText;
+        var text = htmlDoc?.body?.innerText?.Replace("\r\n", " ");
         if (text.IsNullOrEmpty() || htmlDoc.IsNull())
           continue;
 
         // Find matching keywords in the current htmlCtrl
-        var matches = keywords.Search(text);
+        var matches = keywords
+          ?.Search(text)
+          ?.Where(x => x.Word.Length > 2);
+          
         if (matches.IsNull() || !matches.Any())
           continue;
 
@@ -59,10 +63,60 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
           if (word.IsNullOrEmpty())
             continue;
 
-          if (selObj.findText(word, Flags: 2)) // Match whole words only
+          var replaceDuplicate = selObj.duplicate();
+
+          // mshtml is so buggy with newlines
+          // need to check the htmlText if it begins / ends with <BR>
+
+          if (replaceDuplicate.findText(word))
           {
 
-            // Skip keywords that are already links
+            // skip non-full words
+            var isWordDuplicate = replaceDuplicate.duplicate();
+            if (isWordDuplicate.moveStart("character", -1) == -1)
+            {
+              var fstText = isWordDuplicate.text.First();
+              var html = isWordDuplicate.htmlText;
+
+              // TODO: Test this
+              bool htmlStartContainsBR = false;
+              var doc = new HtmlDocument();
+              doc.LoadHtml(html);
+              var firstNode = doc.DocumentNode.SelectNodes("//text()").FirstOrDefault();
+              if (!firstNode.IsNull())
+              {
+                var idx = firstNode.InnerStartIndex;
+                if (html.Substring(0, idx + 1).Contains("<BR>"))
+                {
+                  htmlStartContainsBR = true;
+                }
+              }
+
+              if (!char.IsWhiteSpace(fstText) && !char.IsPunctuation(fstText) && !htmlStartContainsBR)
+                continue;
+            }
+            
+            if (isWordDuplicate.moveEnd("character", 1) == 1)
+            {
+              var lstText = isWordDuplicate.text.Last();
+              var html = isWordDuplicate.htmlText;
+
+              bool htmlEndContainsBR = false;
+              var doc = new HtmlDocument();
+              doc.LoadHtml(html);
+              var lastNode = doc.DocumentNode.SelectNodes("//text()").LastOrDefault();
+              if (!lastNode.IsNull())
+              {
+                var idx = lastNode.InnerStartIndex + lastNode.InnerLength;
+                if (html.Substring(idx).Contains("<BR>"))
+                {
+                  htmlEndContainsBR = true;
+                }
+              }
+
+              if (!char.IsWhiteSpace(lstText) && !char.IsPunctuation(lstText) && !htmlEndContainsBR)
+                continue;
+            }
 
             var parentEl = selObj.parentElement();
             if (!parentEl.IsNull())
@@ -84,15 +138,10 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
               continue;
 
             // Wrap in a link
-            selObj.pasteHTML($"<a href='{href}'>{selObj.text}<a>");
+            selObj.setEndPoint("StartToEnd", replaceDuplicate);
+            replaceDuplicate.pasteHTML($"<a href='{href}'>{replaceDuplicate.text}<a>");
 
           }
-
-          // Since the keywords are index ordered, can collapse to the end and continue searching
-
-          selObj.collapse(false);
-          selObj.moveEnd("character", MAX_TEXT_LENGTH);
-
         }
       }
     }

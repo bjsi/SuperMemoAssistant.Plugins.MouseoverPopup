@@ -29,7 +29,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         return;
 
       _popup.Show(screenX, screenY, w, h, null);
-      OnShow?.Invoke(this, new HtmlPopupEventArgs(screenX, screenY, w, h));
+      OnShow?.Invoke(this, new HtmlPopupEventArgs(screenX, screenY, w, h, _popup));
 
     }
 

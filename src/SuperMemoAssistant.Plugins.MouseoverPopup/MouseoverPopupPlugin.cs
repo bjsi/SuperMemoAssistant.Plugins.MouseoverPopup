@@ -333,13 +333,27 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         // Open a menu to choose a provider if multiple available
         if (matchedProviders.Count > 1)
         {
-          await OpenChooseProviderMenu((IHTMLWindow4)parentWdw, url, innerText, matchedProviders, x, y);
+
+          Action action = () =>
+          {
+            OpenChooseProviderMenu((IHTMLWindow4)parentWdw, url, innerText, matchedProviders, x, y);
+          };
+
+          EventQueue.Enqueue(action);
+
         }
 
         // Directly open a popup window
         else
         {
-          await OpenNewPopupWdw((IHTMLWindow4)parentWdw, url, matchedProviders.First().Value.provider, remoteCancellationTokenSource.Token, x, y);
+
+          Action action = () =>
+          {
+            OpenNewPopupWdw((IHTMLWindow4)parentWdw, url, innerText, matchedProviders.First().Value, remoteCancellationTokenSource.Token, x, y);
+          };
+
+          EventQueue.Enqueue(action);
+
         }
 
       }
@@ -389,9 +403,9 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
           return;
 
         var popup = parentWdw.CreatePopup();
-        popup.OnShow += (sender, args) => _mouseoverSvc?.InvokeOnShow(sender, args);
         if (popup.IsNull())
           return;
+        popup.OnShow += (sender, args) => _mouseoverSvc?.InvokeOnShow(sender, args);
 
         var popupDoc = popup.GetDocument();
         if (popupDoc.IsNull())
@@ -454,19 +468,38 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     /// <param name="x"></param>
     /// <param name="y"></param>
     /// <returns></returns>
-    private async Task OpenNewPopupWdw(IHTMLWindow4 parentWdw, string url, IMouseoverContentProvider provider, RemoteCancellationToken ct, int x, int y)
+    private async Task OpenNewPopupWdw(IHTMLWindow4 parentWdw, string url, string innerText, ContentProvider providerInfo, RemoteCancellationToken ct, int x, int y)
     {
 
-      if (url.IsNullOrEmpty() || provider.IsNull() || parentWdw.IsNull())
+      if (url.IsNullOrEmpty() || parentWdw.IsNull())
         return;
 
-      // Get html
-      PopupContent content = await provider.FetchHtml(ct, url);
+      if (providerInfo.IsNull() || providerInfo.provider.IsNull())
+        return;
+
+      var provider = providerInfo.provider;
+
+      // Check url or keywords
+
+      PopupContent content = null;
+      if (providerInfo.urlRegexes.Any(r => new Regex(r).Match(url).Success))
+      {
+        content = await provider.FetchHtml(ct, url);
+      }
+      else
+      {
+        if (providerInfo.keywordScanningOptions.urlKeywordMap.TryGetValue(innerText, out var href))
+        {
+          content = await provider.FetchHtml(ct, href);
+        }
+        else
+          return;
+      }
+
       if (content.IsNull() || content.Html.IsNullOrEmpty())
         return;
 
 
-      // Create Popup
       await Application.Current.Dispatcher.BeginInvoke((Action)(() =>
       {
         try
@@ -635,7 +668,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     }
 
-    private void PopupWindowLinkClick_OnEvent(object sender, IControlHtmlEventArgs obj, int x, int y, int w, int h, HtmlPopup popup)
+    private async void PopupWindowLinkClick_OnEvent(object sender, IControlHtmlEventArgs obj, int x, int y, int w, int h, HtmlPopup popup)
     {
 
       var ev = obj.EventObj;
@@ -674,13 +707,13 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
           action = () =>
           {
-            OpenNewPopupWdw((IHTMLWindow4)wdw, url, matchedProviders.First().Value.provider, new RemoteCancellationToken(new CancellationToken()), x, y);
+
+            OpenNewPopupWdw((IHTMLWindow4)wdw, url, innerText, matchedProviders.First().Value, new RemoteCancellationToken(new CancellationToken()), x, y);
           };
 
         }
         else
         {
-
           action = () =>
           {
             OpenChooseProviderMenu((IHTMLWindow4)wdw, url, innerText, matchedProviders, x, y);
@@ -697,7 +730,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
           action = () =>
           {
-            OpenNewPopupWdw((IHTMLWindow4)wdw, url, matchedProviders.First().Value.provider, new RemoteCancellationToken(new CancellationToken()), x, y);
+            OpenNewPopupWdw((IHTMLWindow4)wdw, url, innerText, matchedProviders.First().Value, new RemoteCancellationToken(new CancellationToken()), x, y);
           };
 
         }
