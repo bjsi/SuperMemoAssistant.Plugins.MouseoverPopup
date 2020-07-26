@@ -1,4 +1,5 @@
-﻿using Ganss.Text;
+﻿using Anotar.Serilog;
+using Ganss.Text;
 using HtmlAgilityPack;
 using mshtml;
 using SuperMemoAssistant.Extensions;
@@ -7,6 +8,8 @@ using SuperMemoAssistant.Plugins.MouseoverPopup.Models;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
+using System.Runtime.Remoting;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -25,30 +28,49 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     public static void ScanAndAddLinks(Dictionary<string, ContentProvider> providers, AhoCorasick keywords)
     {
 
-      var htmlCtrls = ContentUtils.GetHtmlCtrls();
-      if (htmlCtrls.IsNull() || !htmlCtrls.Any())
-        return;
+      try
+      {
+
+        var htmlCtrls = ContentUtils.GetHtmlCtrls();
+        if (htmlCtrls.IsNull() || !htmlCtrls.Any())
+          return;
 
       foreach (KeyValuePair<int, IControlHtml> kvpair in htmlCtrls)
       {
 
         var htmlCtrl = kvpair.Value;
         var htmlDoc = htmlCtrl?.GetDocument();
-        var text = htmlDoc?.body?.innerText?.Replace("\r\n", " ");
+        var text = htmlDoc?.body?.innerText
+          ?.Replace("\r\n", " ")
+          ?.ToLowerInvariant();
+
         if (text.IsNullOrEmpty() || htmlDoc.IsNull())
           continue;
+
 
         // Find matching keywords in the current htmlCtrl
         var matches = keywords
           ?.Search(text)
           ?.Where(x => x.Word.Length > 2);
-          
+
+          // Don't add links to the references section of a component
+          int referencesIdx = text.IndexOf("#supermemo reference:");
+          if (referencesIdx != -1)
+          {
+
+            matches = matches
+              ?.Where(x => x.Index < referencesIdx);
+
+          }
+
         if (matches.IsNull() || !matches.Any())
           continue;
 
-        // TODO: Sort by longest matches, then index or vice versa
         // Order the keywords by index
-        var orderedMatches = matches.OrderBy(x => x.Index);
+        var orderedMatches = matches
+          ?.OrderBy(x => x.Index)
+          ?.ThenByDescending(x => x.Word.Length);
+
         var selObj = htmlDoc.selection?.createRange() as IHTMLTxtRange;
         if (orderedMatches.IsNull() || !orderedMatches.Any() || selObj.IsNull())
           continue;
@@ -65,84 +87,100 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
           var replaceDuplicate = selObj.duplicate();
 
-          // mshtml is so buggy with newlines
-          // need to check the htmlText if it begins / ends with <BR>
+            // mshtml is so buggy with newlines
+            // need to check the htmlText if it begins / ends with <BR>
 
-          if (replaceDuplicate.findText(word))
-          {
-
-            // skip non-full words
-            var isWordDuplicate = replaceDuplicate.duplicate();
-            if (isWordDuplicate.moveStart("character", -1) == -1)
+            if (replaceDuplicate.findText(word))
             {
-              var fstText = isWordDuplicate.text.First();
-              var html = isWordDuplicate.htmlText;
 
-              // TODO: Test this
-              bool htmlStartContainsBR = false;
-              var doc = new HtmlDocument();
-              doc.LoadHtml(html);
-              var firstNode = doc.DocumentNode.SelectNodes("//text()").FirstOrDefault();
-              if (!firstNode.IsNull())
+              // skip non-full words
+              var isWordDuplicate = replaceDuplicate.duplicate();
+
+              if (isWordDuplicate.moveStart("character", -1) == -1)
               {
-                var idx = firstNode.InnerStartIndex;
-                if (html.Substring(0, idx + 1).Contains("<BR>"))
+                var fstText = isWordDuplicate.text.First();
+                var html = isWordDuplicate.htmlText;
+
+                if (!char.IsWhiteSpace(fstText) && !char.IsPunctuation(fstText))
                 {
-                  htmlStartContainsBR = true;
+
+                  bool htmlStartContainsBR = false;
+                  var doc = new HtmlDocument();
+                  doc.LoadHtml(html);
+                  var firstNode = doc.DocumentNode.SelectNodes("//text()").FirstOrDefault();
+                  if (!firstNode.IsNull())
+                  {
+                    var idx = firstNode.InnerStartIndex;
+                    if (html.Substring(0, idx + 1).Contains("<BR>"))
+                    {
+                      htmlStartContainsBR = true;
+                    }
+                  }
+
+                  if (!htmlStartContainsBR)
+                    continue;
+
+                }
+
+              }
+
+              if (isWordDuplicate.moveEnd("character", 2) == 2)
+              {
+                var lstText = isWordDuplicate.text[isWordDuplicate.text.Length - 2];
+                var html = isWordDuplicate.htmlText;
+
+                if (!char.IsWhiteSpace(lstText) && !char.IsPunctuation(lstText))
+                {
+
+                  bool htmlEndContainsBR = false;
+                  var doc = new HtmlDocument();
+                  doc.LoadHtml(html);
+                  var lastNode = doc.DocumentNode.SelectNodes("//text()").LastOrDefault();
+                  if (!lastNode.IsNull())
+                  {
+                    var idx = lastNode.InnerStartIndex + lastNode.InnerLength;
+                    if (html.Substring(idx).Contains("<BR>"))
+                    {
+                      htmlEndContainsBR = true;
+                    }
+                  }
+
+                  if (!htmlEndContainsBR)
+                    continue;
                 }
               }
 
-              if (!char.IsWhiteSpace(fstText) && !char.IsPunctuation(fstText) && !htmlStartContainsBR)
-                continue;
-            }
-            
-            if (isWordDuplicate.moveEnd("character", 1) == 1)
-            {
-              var lstText = isWordDuplicate.text.Last();
-              var html = isWordDuplicate.htmlText;
-
-              bool htmlEndContainsBR = false;
-              var doc = new HtmlDocument();
-              doc.LoadHtml(html);
-              var lastNode = doc.DocumentNode.SelectNodes("//text()").LastOrDefault();
-              if (!lastNode.IsNull())
+              var parentEl = selObj.parentElement();
+              if (!parentEl.IsNull())
               {
-                var idx = lastNode.InnerStartIndex + lastNode.InnerLength;
-                if (html.Substring(idx).Contains("<BR>"))
-                {
-                  htmlEndContainsBR = true;
-                }
+                if (parentEl.tagName.ToLowerInvariant() == "a")
+                  continue;
               }
 
-              if (!char.IsWhiteSpace(lstText) && !char.IsPunctuation(lstText) && !htmlEndContainsBR)
+              // Add the first url that matches from the providers
+
+              string href = null;
+              foreach (var provider in providers)
+              {
+                if (provider.Value.keywordScanningOptions.urlKeywordMap.TryGetValue(word, out href))
+                  break;
+              }
+
+              if (href.IsNullOrEmpty())
                 continue;
+
+              // Wrap in a link
+              selObj.setEndPoint("StartToEnd", replaceDuplicate);
+              replaceDuplicate.pasteHTML($"<a href='{href}'>{replaceDuplicate.text}<a>");
             }
-
-            var parentEl = selObj.parentElement();
-            if (!parentEl.IsNull())
-            {
-              if (parentEl.tagName.ToLowerInvariant() == "a")
-                continue;
-            }
-
-            // Add the first url that matches from the providers
-
-            string href = null;
-            foreach (var provider in providers)
-            {
-              if (provider.Value.keywordScanningOptions.urlKeywordMap.TryGetValue(word, out href))
-                break;
-            }
-
-            if (href.IsNullOrEmpty())
-              continue;
-
-            // Wrap in a link
-            selObj.setEndPoint("StartToEnd", replaceDuplicate);
-            replaceDuplicate.pasteHTML($"<a href='{href}'>{replaceDuplicate.text}<a>");
-
           }
         }
+      }
+      catch (UnauthorizedAccessException) { }
+      catch (COMException) { }
+      catch (Exception ex)
+      {
+        LogTo.Error($"Exception {ex} while executing ScanAndAddLinks");
       }
     }
 
