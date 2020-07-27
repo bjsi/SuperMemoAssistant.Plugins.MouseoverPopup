@@ -13,6 +13,25 @@ using System.Threading.Tasks;
 namespace SuperMemoAssistant.Plugins.MouseoverPopup
 {
 
+  public class HtmlPopupOptions
+  {
+
+    public int x;
+    public int y;
+    public int width;
+    public int height;
+
+    public HtmlPopupOptions(int x, int y, int width, int height)
+    {
+
+      this.x = x;
+      this.y = y;
+      this.width = width;
+      this.height = height;
+
+    }
+  }
+
   public class HtmlPopup
   {
 
@@ -40,6 +59,9 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     public event EventHandler<IControlHtmlEventArgs> OnEditButtonClick;
     private HtmlEvent _editButtonClickEvent { get; set; }
 
+
+    public HtmlPopupOptions Options { get; set; }
+
     // For icons I created an Images folder in the Plugins\Development\PluginName folder
     private string outPutDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().CodeBase);
 
@@ -59,7 +81,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
       // Popup Styling
       popupDoc.body.style.border = "solid black 1px";
-      //popupDoc.body.style.overflow = "scroll";
+      popupDoc.body.style.overflow = "scroll";
       popupDoc.body.style.margin = "7px";
 
     }
@@ -74,15 +96,17 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       popupDoc.body.innerHTML = content;
     }
 
-    public void Show(int screenX, int screenY, int w, int h)
+    public void Show(HtmlPopupOptions opts)
     {
 
       if (_popup.IsNull())
         return;
 
+      this.Options = opts;
+
       SubscribeToLinkClickEvents();
-      _popup.Show(screenX, screenY, w, h, null);
-      OnShow?.Invoke(this, new HtmlPopupEventArgs(screenX, screenY, w, h, _popup));
+      _popup.Show(opts.x, opts.y, opts.width, opts.height, null);
+      OnShow?.Invoke(this, new HtmlPopupEventArgs(opts.x, opts.y, opts.width, opts.height, _popup));
 
     }
 

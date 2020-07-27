@@ -38,6 +38,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
   using System.IO;
   using System.Linq;
   using System.Reflection;
+  using System.Runtime.InteropServices;
   using System.Runtime.Remoting;
   using System.Text.RegularExpressions;
   using System.Threading;
@@ -335,7 +336,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
           Action action = () =>
           {
-            OpenChooseProviderMenu((IHTMLWindow4)parentWdw, url, innerText, matchedProviders, x, y);
+            OpenChooseProviderMenu((IHTMLWindow4)parentWdw, url, innerText, matchedProviders, remoteCancellationTokenSource.Token, x, y);
           };
 
           EventQueue.Enqueue(action);
@@ -380,14 +381,8 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     /// <summary>
     /// If multiple providers match, open a selection menu so the user can pick one.
     /// </summary>
-    /// <param name="parentWdw"></param>
-    /// <param name="url"></param>
-    /// <param name="text"></param>
-    /// <param name="providers"></param>
-    /// <param name="x"></param>
-    /// <param name="y"></param>
     /// <returns></returns>
-    private async Task OpenChooseProviderMenu(IHTMLWindow4 parentWdw, string url, string text, Dictionary<string, ContentProvider> providers, int x, int y)
+    private async Task OpenChooseProviderMenu(IHTMLWindow4 parentWdw, string url, string text, Dictionary<string, ContentProvider> providers, RemoteCancellationToken ct, int x, int y)
     {
 
       if (url.IsNullOrEmpty() || text.IsNullOrEmpty())
@@ -399,45 +394,59 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       if (providers.IsNull() || !providers.Any())
         return;
 
+      // Create some delay
+      await Task.Delay(400);
+
+      if (ct.Token().IsCancellationRequested)
+        return;
+
       await Application.Current.Dispatcher.BeginInvoke((Action)(() =>
       {
-
-        var htmlDoc = ((IHTMLWindow2)parentWdw).document;
-        var htmlCtrlBody = htmlDoc.body;
-        if (htmlCtrlBody.IsNull())
-          return;
-
-        var popup = parentWdw.CreatePopup();
-        if (popup.IsNull())
-          return;
-
-        popup.OnShow += (sender, args) => _mouseoverSvc?.InvokeOnShow(sender, args);
-
-        string choices = string.Empty;
-
-        foreach (var provider in providers)
+        try
         {
-          choices += $"<li><a href='{provider.Value.keywordScanningOptions.urlKeywordMap[text.ToLowerInvariant()]}'>{text} ({provider.Key})</li>";
+
+          var htmlDoc = ((IHTMLWindow2)parentWdw).document;
+          var htmlCtrlBody = htmlDoc.body;
+          if (htmlCtrlBody.IsNull())
+            return;
+
+          var popup = parentWdw.CreatePopup();
+          if (popup.IsNull())
+            return;
+
+          popup.OnShow += (sender, args) => _mouseoverSvc?.InvokeOnShow(sender, args);
+
+          string choices = string.Empty;
+
+          foreach (var provider in providers)
+          {
+            choices += $"<li><a href='{provider.Value.keywordScanningOptions.urlKeywordMap[text.ToLowerInvariant()]}'>{text} ({provider.Key})</li>";
+          }
+
+          string html = $@"
+              <html>
+                <body>
+                  <h2>Options</h2>
+                  <ul>
+                    {choices}
+                  </ul>
+                </body>
+              </html>";
+
+          popup.AddContent(html);
+
+          int width = 400;
+          int height = CalculatePopupHeight(popup, width);
+
+          // Link Click events
+
+          var opts = new HtmlPopupOptions(x, y, width, height);
+          popup.OnLinkClick += (sender, args) => PopupWindowLinkClick_OnEvent(sender, args, opts, popup);
+          popup.Show(opts);
+
         }
-
-        string html = $@"
-            <html>
-              <body>
-                <h2>Options</h2>
-                <ul>
-                  {choices}
-                </ul>
-              </body>
-            </html>";
-
-        popup.AddContent(html);
-
-        int width = 300;
-        int height = CalculatePopupHeight(popup, width);
-
-        // Link Click events
-        popup.OnLinkClick += (sender, args) => PopupWindowLinkClick_OnEvent(sender, args, x, y, width, height, popup);
-        popup.Show(x, y, width, height);
+        catch (UnauthorizedAccessException) { }
+        catch (COMException) { }
 
       }));
 
@@ -458,8 +467,12 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
       var provider = providerInfo.provider;
 
-      // Check url or keywords
+      // Check whether url or keywords matched and fetch the corresponding content
+      // Time the response and add some delay if necessary.
+      // This prevents many popups opening when you move the mouse over many links
+      // It also makes the interval between mouseover and popup opening more consistent
 
+      var start = DateTime.Now;
       PopupContent content = null;
       if (providerInfo.urlRegexes.Any(r => new Regex(r).Match(url).Success))
       {
@@ -474,6 +487,17 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         else
           return;
       }
+
+      // Add delay if necessary
+
+      var responseTime = DateTime.Now - start;
+      if (responseTime.TotalMilliseconds < 400)
+      {
+        await Task.Delay(TimeSpan.FromMilliseconds(400 - responseTime.TotalMilliseconds));
+      }
+
+      if (ct.Token().IsCancellationRequested)
+        return;
 
       if (content.IsNull() || content.Html.IsNullOrEmpty())
         return;
@@ -533,10 +557,14 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
           int width = 300;
           int height = CalculatePopupHeight(popup, width);
 
-          // Link Click events
-          popup.OnLinkClick += (sender, args) => PopupWindowLinkClick_OnEvent(sender, args, x, y, width, height, popup);
+          if (ct.Token().IsCancellationRequested)
+            return;
 
-          popup.Show(x, y, width, height);
+          // Link Click events
+
+          var opts = new HtmlPopupOptions(x, y, width, height);
+          popup.OnLinkClick += (sender, args) => PopupWindowLinkClick_OnEvent(sender, args, opts, popup);
+          popup.Show(opts);
 
         }
         catch (RemotingException) { }
@@ -589,7 +617,8 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     }
 
-    private async void PopupWindowLinkClick_OnEvent(object sender, IControlHtmlEventArgs obj, int x, int y, int w, int h, HtmlPopup popup)
+    // TODO: Refactor
+    private async void PopupWindowLinkClick_OnEvent(object sender, IControlHtmlEventArgs obj, HtmlPopupOptions opts, HtmlPopup popup)
     {
 
       var ev = obj.EventObj;
@@ -618,7 +647,8 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         if (popup.IsNull())
           return;
 
-        x += w;
+        // Open to the right of the current window
+        opts.x += opts.width;
         var doc = popup.GetDocument();
         var wdw = Application.Current.Dispatcher.Invoke(() => doc.parentWindow);
 
@@ -628,7 +658,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
           action = () =>
           {
 
-            OpenNewPopupWdw((IHTMLWindow4)wdw, url, innerText, matchedProviders.First().Value, new RemoteCancellationToken(new CancellationToken()), x, y);
+            OpenNewPopupWdw((IHTMLWindow4)wdw, url, innerText, matchedProviders.First().Value, new RemoteCancellationToken(new CancellationToken()), opts.x, opts.y);
           };
 
         }
@@ -636,7 +666,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         {
           action = () =>
           {
-            OpenChooseProviderMenu((IHTMLWindow4)wdw, url, innerText, matchedProviders, x, y);
+            OpenChooseProviderMenu((IHTMLWindow4)wdw, url, innerText, matchedProviders, new RemoteCancellationToken(new CancellationToken()), opts.x, opts.y);
           };
 
         }
@@ -650,7 +680,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
           action = () =>
           {
-            OpenNewPopupWdw((IHTMLWindow4)wdw, url, innerText, matchedProviders.First().Value, new RemoteCancellationToken(new CancellationToken()), x, y);
+            OpenNewPopupWdw((IHTMLWindow4)wdw, url, innerText, matchedProviders.First().Value, new RemoteCancellationToken(new CancellationToken()), opts.x, opts.y);
           };
 
         }
@@ -659,7 +689,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
           action = () =>
           {
-            OpenChooseProviderMenu((IHTMLWindow4)wdw, url, innerText, matchedProviders, x, y);
+            OpenChooseProviderMenu((IHTMLWindow4)wdw, url, innerText, matchedProviders, new RemoteCancellationToken(new CancellationToken()), opts.x, opts.y);
           };
 
         }
@@ -682,9 +712,14 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       // Pass to the event queue to avoid deadlock issues
       Action action = () =>
       {
+        try
+        {
 
-        if (!Svc.SM.UI.ElementWdw.GoToElement(elementId))
-          LogTo.Warning($"Failed to GoToElement with id {elementId}");
+          if (!Svc.SM.UI.ElementWdw.GoToElement(elementId))
+            LogTo.Warning($"Failed to GoToElement with id {elementId}");
+
+        }
+        catch (RemotingException) { }
 
       };
 
@@ -725,87 +760,103 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     }
 
+    [LogToErrorOnException]
     private void ExtractButtonClick_OnEvent(object sender, IControlHtmlEventArgs e, PopupContent content, HtmlPopup popup)
     {
 
-      ExtractType type = ExtractType.Full;
+      try
+      {
 
-      if (popup.IsNull() || content.IsNull())
-        return;
+        ExtractType type = ExtractType.Full;
+        if (popup.IsNull() || content.IsNull())
+          return;
 
-      var htmlDoc = popup.GetDocument();
-      if (htmlDoc.IsNull())
-        return;
-      
-      var sel = htmlDoc?.selection;
-      var selObj = sel?.createRange() as IHTMLTxtRange;
+        var htmlDoc = popup.GetDocument();
+        if (htmlDoc.IsNull())
+          return;
+        
+        var sel = htmlDoc?.selection;
+        var selObj = sel?.createRange() as IHTMLTxtRange;
 
-      if (selObj.IsNull() || selObj.htmlText.IsNullOrEmpty())
-        type = ExtractType.Full;
-      else
-        type = ExtractType.Partial;
+        if (selObj.IsNull() || selObj.htmlText.IsNullOrEmpty())
+          type = ExtractType.Full;
+        else
+          type = ExtractType.Partial;
 
-      // Create an action to be passed to the event thread
-      // Running on the main UI thread causes deadlock
+        // Create an action to be passed to the event thread
+        // Running on the main UI thread causes deadlock
 
-      Action action = () => {
+        Action action = () => {
 
-        // Extract the whole popup document
-        if (type == ExtractType.Full)
-          CreateSMExtract(content.Html, content.References);
+          // Extract the whole popup document
+          if (type == ExtractType.Full)
+            CreateSMExtract(content.Html, content.References, popup);
 
-        // Extract selected html
-        else if (type == ExtractType.Partial)
-          CreateSMExtract(selObj.htmlText, content.References);
+          // Extract selected html
+          else if (type == ExtractType.Partial)
+            CreateSMExtract(selObj.htmlText, content.References, popup);
 
-      };
+        };
 
-      EventQueue.Enqueue(action);
+        EventQueue.Enqueue(action);
+      }
+      catch (UnauthorizedAccessException) { }
+      catch (COMException) { }
 
     }
 
-    private void CreateSMExtract(string extract, References refs)
+    [LogToErrorOnException]
+    private void CreateSMExtract(string extract, References refs, HtmlPopup popup)
     {
 
-      if (extract.IsNullOrEmpty())
+      try
       {
-        LogTo.Error("Failed to CreateSMElement beacuse extract text was null");
-        return;
-      }
 
-      var contents = new List<ContentBase>();
-      contents.Add(new TextContent(true, extract));
-      var currentElement = Svc.SM.UI.ElementWdw.CurrentElement;
+        if (extract.IsNullOrEmpty())
+        {
+          LogTo.Error("Failed to CreateSMElement beacuse extract text was null");
+          return;
+        }
 
-      if (currentElement == null)
-      {
-        LogTo.Error("Failed to CreateSMElement beacuse element was null");
-        return;
-      }
+        var contents = new List<ContentBase>();
+        contents.Add(new TextContent(true, extract));
+        var currentElement = Svc.SM.UI.ElementWdw.CurrentElement;
 
-      bool ret = Svc.SM.Registry.Element.Add(
-        out var value,
-        ElemCreationFlags.ForceCreate,
-        new ElementBuilder(ElementType.Topic, contents.ToArray())
-          .WithParent(currentElement)
-          .WithLayout("Article")
-          .WithPriority(Config.DefaultPriority)
-          .WithReference(r =>
-            r.WithLink(refs.Link)
-             .WithSource(refs.Source)
-             .WithTitle(refs.Title)
-          )
-          .DoNotDisplay()
-      );
+        if (currentElement == null)
+        {
+          LogTo.Error("Failed to CreateSMElement beacuse element was null");
+          return;
+        }
 
-      if (ret)
-      {
-        LogTo.Debug("Successfully created SM Element");
+        bool ret = Svc.SM.Registry.Element.Add(
+          out var value,
+          ElemCreationFlags.ForceCreate,
+          new ElementBuilder(ElementType.Topic, contents.ToArray())
+            .WithParent(currentElement)
+            .WithLayout("Article")
+            .WithPriority(Config.DefaultPriority)
+            .WithReference(r =>
+              r.WithLink(refs.Link)
+               .WithSource(refs.Source)
+               .WithTitle(refs.Title)
+            )
+            .DoNotDisplay()
+        );
+
+        if (ret)
+        {
+          LogTo.Debug("Successfully created SM Element");
+        }
+        else
+        {
+          string msg = "Failed to CreateSMElement";
+          MessageBox.Show(msg);
+          LogTo.Error(msg);
+        }
+
       }
-      else
-      {
-        LogTo.Error("Failed to CreateSMElement");
-      }
+      catch (RemotingException) { }
+
     }
 
 
