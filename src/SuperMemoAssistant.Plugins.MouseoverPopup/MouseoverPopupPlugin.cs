@@ -390,7 +390,13 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     private async Task OpenChooseProviderMenu(IHTMLWindow4 parentWdw, string url, string text, Dictionary<string, ContentProvider> providers, int x, int y)
     {
 
-      if (url.IsNullOrEmpty())
+      if (url.IsNullOrEmpty() || text.IsNullOrEmpty())
+        return;
+
+      if (parentWdw.IsNull())
+        return;
+
+      if (providers.IsNull() || !providers.Any())
         return;
 
       await Application.Current.Dispatcher.BeginInvoke((Action)(() =>
@@ -404,16 +410,8 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         var popup = parentWdw.CreatePopup();
         if (popup.IsNull())
           return;
+
         popup.OnShow += (sender, args) => _mouseoverSvc?.InvokeOnShow(sender, args);
-
-        var popupDoc = popup.GetDocument();
-        if (popupDoc.IsNull())
-          return;
-
-        // Popup Styling
-        popupDoc.body.style.border = "solid black 1px";
-        //popupDoc.body.style.overflow = "scroll";
-        popupDoc.body.style.margin = "7px";
 
         string choices = string.Empty;
 
@@ -422,30 +420,23 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
           choices += $"<li><a href='{provider.Value.keywordScanningOptions.urlKeywordMap[text.ToLowerInvariant()]}'>{text} ({provider.Key})</li>";
         }
 
-        popupDoc.body.innerHTML = $@"
+        string html = $@"
             <html>
               <body>
-                <h1>Mouseover Popup Menu</h1>
+                <h2>Options</h2>
                 <ul>
                   {choices}
                 </ul>
               </body>
             </html>";
 
-        int maxheight = 400;
+        popup.AddContent(html);
+
         int width = 300;
-        int height = popup.GetOffsetHeight(width) + 10;
+        int height = CalculatePopupHeight(popup, width);
 
-        if (height > maxheight)
-        {
-          height = maxheight;
-          popupDoc.body.style.overflow = "scroll";
-        }
-        else
-        {
-          popupDoc.body.style.overflow = "";
-        }
-
+        // Link Click events
+        popup.OnLinkClick += (sender, args) => PopupWindowLinkClick_OnEvent(sender, args, x, y, width, height, popup);
         popup.Show(x, y, width, height);
 
       }));
