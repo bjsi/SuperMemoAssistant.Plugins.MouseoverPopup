@@ -100,13 +100,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     private HtmlEvent AnchorElementMouseLeave { get; set; }
     private HtmlEvent AnchorElementMouseEnter { get; set; }
 
-    // Popup window events
-    private HtmlEvent PopupAnchorElementClick { get; set; }
-    private HtmlEvent PopupExtractButtonClick { get; set; }
-    private HtmlEvent PopupBrowserButtonClick { get; set; }
-    private HtmlEvent PopupGotoButtonClick { get; set; }
-    private HtmlEvent PopupEditButtonClick { get; set; }
-
     // Used to run certain actions off of the UI thread
     // eg. item creation - otherwise will result in deadlock
     private EventfulConcurrentQueue<Action> EventQueue = new EventfulConcurrentQueue<Action>();
@@ -258,23 +251,25 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     {
 
       var matchingProviders = ProviderMatching.MatchProvidersAgainstCurrentElement(providers);
-      if (matchingProviders.IsNull() || !matchingProviders.Any())
-        return;
+      if (!matchingProviders.IsNull() && matchingProviders.Any())
+      {
 
-      var searchKeywords = Keywords.CreateKeywords(matchingProviders);
-      if (searchKeywords.IsNull())
-        return;
+        // Create keyword trie
+        var searchKeywords = Keywords.CreateKeywords(matchingProviders);
+        if (searchKeywords.IsNull())
+          return;
 
-      // Adds links to matched keywords in the current element
-      Keywords.ScanAndAddLinks(matchingProviders, searchKeywords);
+        // Adds links to matched keywords in the current element
+        Keywords.ScanAndAddLinks(matchingProviders, searchKeywords);
+
+      }
 
       // Subscribe to mouseover and mouseleave events
-      SubscribeToHtmlDocEvents(matchingProviders);
+      // TODO: Pass all providers or just matching?
+      SubscribeToHtmlDocEvents(providers);
 
     }
 
-    // TODO: Matching providers like this won't handle text changes well
-    // Only refreshes on element changed events
     private void SubscribeToHtmlDocEvents(Dictionary<string, ContentProvider> matchedProviders)
     {
 
@@ -284,11 +279,15 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
       AnchorElementMouseEnter = new HtmlEvent();
 
-      // Add mouseenter events to anchor elements
-      var all = htmlDoc.body?.all as IHTMLElementCollection;
-      all?.Cast<IHTMLElement>()
-         ?.Where(x => x.tagName.ToLowerInvariant() == "a")
-         ?.ForEach(x => ((IHTMLElement2)x).SubscribeTo(EventType.onmouseenter, AnchorElementMouseEnter));
+      // Add mouseenter events to links
+      var links = htmlDoc.links;
+      if (links.IsNull())
+        return;
+
+      foreach (IHTMLElement2 link in links)
+      {
+         link.SubscribeTo(EventType.onmouseenter, AnchorElementMouseEnter);
+      }
 
       AnchorElementMouseEnter.OnEvent += (sender, args) => AnchorElementMouseEnterEvent(sender, args, matchedProviders);
 
@@ -449,11 +448,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
         popup.Show(x, y, width, height);
 
-        // Popup links
-        PopupAnchorElementClick = new HtmlEvent();
-        ((IHTMLElement2)popupDoc.body).SubscribeTo(EventType.onclick, PopupAnchorElementClick);
-        PopupAnchorElementClick.OnEvent += (sender, args) => PopupWindowLinkClick_OnEvent(sender, args, x, y, width, height, popup);
-
       }));
 
     }
@@ -461,17 +455,11 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     /// <summary>
     /// Open a new popup mouseover popup.
     /// </summary>
-    /// <param name="parentWdw"></param>
-    /// <param name="url"></param>
-    /// <param name="provider"></param>
-    /// <param name="ct"></param>
-    /// <param name="x"></param>
-    /// <param name="y"></param>
     /// <returns></returns>
     private async Task OpenNewPopupWdw(IHTMLWindow4 parentWdw, string url, string innerText, ContentProvider providerInfo, RemoteCancellationToken ct, int x, int y)
     {
 
-      if (url.IsNullOrEmpty() || parentWdw.IsNull())
+      if (url.IsNullOrEmpty() || parentWdw.IsNull() || innerText.IsNullOrEmpty())
         return;
 
       if (providerInfo.IsNull() || providerInfo.provider.IsNull())
@@ -499,7 +487,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       if (content.IsNull() || content.Html.IsNullOrEmpty())
         return;
 
-
       await Application.Current.Dispatcher.BeginInvoke((Action)(() =>
       {
         try
@@ -509,73 +496,28 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
           if (htmlDoc.IsNull())
             return;
 
-          var htmlCtrlBody = htmlDoc.body;
-          if (htmlCtrlBody.IsNull())
-            return;
-
           var popup = parentWdw.CreatePopup();
-          popup.OnShow += (sender, args) => _mouseoverSvc?.InvokeOnShow(sender, args);
           if (popup.IsNull())
             return;
 
-          var popupDoc = popup.GetDocument();
-          if (popupDoc.IsNull())
-            return;
-
-          // Popup Styling
-          popupDoc.body.style.border = "solid black 1px";
-          //popupDoc.body.style.overflow = "scroll";
-          popupDoc.body.style.margin = "7px";
-          popupDoc.body.innerHTML = content.Html;
-
-          // For icons I created an Images folder in the Plugins\Development\PluginName folder
-          var outPutDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().CodeBase);
+          popup.OnShow += (sender, args) => _mouseoverSvc?.InvokeOnShow(sender, args);
+          popup.AddContent(content.Html);
 
           // Extract Button
           if (content.AllowExtract)
           {
 
-            // Create Extract button
-            var extractBtn = popupDoc.createElement("<button>");
-            extractBtn.id = "extract-btn";
-
-            var iconPath = Path.Combine(outPutDirectory, "Images\\SMExtract.png");
-            string icon_path = new Uri(iconPath).LocalPath;
-
-            extractBtn.innerHTML = $"<span><img src='{icon_path}' width='16px' height='16px' margin='5px'></span>";
-            //extractBtn.innerText = "Extract";
-            extractBtn.style.margin = "10px";
-
-            // Add extract button
-            ((IHTMLDOMNode)popupDoc.body).appendChild((IHTMLDOMNode)extractBtn);
-
-            // Add click event
-            PopupExtractButtonClick = new HtmlEvent();
-            ((IHTMLElement2)extractBtn).SubscribeTo(EventType.onclick, PopupExtractButtonClick);
-            PopupExtractButtonClick.OnEvent += (sender, e) => ExtractButtonClick_OnEvent(sender, e, content, popup);
+            popup.AddExtractButton();
+            popup.OnExtractButtonClick += (sender, args) => ExtractButtonClick_OnEvent(sender, args, content, popup);
 
           }
 
-          // Goto Element Button
+          // SM Element Goto Button
           if (content.SMElementId > -1)
           {
 
-            var iconPath = Path.Combine(outPutDirectory, "Images\\GotoElement.jpg");
-            string icon_path = new Uri(iconPath).LocalPath;
-
-            // Create goto element button
-            var gotobutton = popupDoc.createElement("<button>");
-            gotobutton.id = "goto-btn";
-            gotobutton.innerHTML = $"<span><img src='{icon_path}' width='16px' height='16px' margin='5px'></span>";
-            gotobutton.style.margin = "10px";
-
-            // Add Goto button
-            ((IHTMLDOMNode)popupDoc.body).appendChild((IHTMLDOMNode)gotobutton);
-
-            // Add click event
-            PopupGotoButtonClick = new HtmlEvent();
-            ((IHTMLElement2)gotobutton).SubscribeTo(EventType.onclick, PopupGotoButtonClick);
-            PopupGotoButtonClick.OnEvent += (sender, e) => GotoElementButtonClick_OnEvent(sender, e, content.SMElementId);
+            popup.AddGotoButton();
+            popup.OnGotoButtonClick += (sender, args) => GotoElementButtonClick_OnEvent(sender, args, content.SMElementId);
 
           }
 
@@ -583,74 +525,62 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
           if (!content.EditUrl.IsNullOrEmpty())
           {
 
-            var iconPath = Path.Combine(outPutDirectory, "Images\\Editor.png");
-            string icon_path = new Uri(iconPath).LocalPath;
-
-            var editBtn = popupDoc.createElement("<button>");
-            editBtn.id = "edit-btn";
-
-            editBtn.innerHTML = $"<span><img src='{icon_path}' width='16px' height='16px' margin='5px'></span>";
-            editBtn.style.margin = "10px";
-
-            // Create open button
-            ((IHTMLDOMNode)popupDoc.body).appendChild((IHTMLDOMNode)editBtn);
-
-            // Add click event
-            PopupEditButtonClick = new HtmlEvent();
-            ((IHTMLElement2)editBtn).SubscribeTo(EventType.onclick, PopupEditButtonClick);
-            PopupEditButtonClick.OnEvent += (sender, args) => EditButtonClick_OnEvent(sender, args, content.EditUrl);
+            popup.AddEditButton();
+            popup.OnEditButtonClick += (sender, args) => EditButtonClick_OnEvent(sender, args, content.EditUrl);
 
           }
 
+          // Browser Button
           if (!content.BrowserQuery.IsNullOrEmpty())
           {
 
-            var iconPath = Path.Combine(outPutDirectory, "Images\\web.png");
-            string icon_path = new Uri(iconPath).LocalPath;
-
-            // Create browser button
-            var browserBtn = popupDoc.createElement("<button>");
-            browserBtn.id = "browser-btn";
-
-            browserBtn.innerHTML = $"<span><img src='{icon_path}' width='16px' height='16px' margin='5px'></span>";
-            browserBtn.style.margin = "10px";
-
-            // Create open button
-            ((IHTMLDOMNode)popupDoc.body).appendChild((IHTMLDOMNode)browserBtn);
-
-            // Add click event
-            PopupBrowserButtonClick = new HtmlEvent();
-            ((IHTMLElement2)browserBtn).SubscribeTo(EventType.onclick, PopupBrowserButtonClick);
-            PopupBrowserButtonClick.OnEvent += (sender, args) => PopupBrowserButtonClick_OnEvent(sender, args, content.BrowserQuery);
+            popup.AddBrowserButton();
+            popup.OnBrowserButtonClick += (sender, args) => PopupBrowserButtonClick_OnEvent(sender, args, content.BrowserQuery);
 
           }
 
-          int maxheight = 400;
           int width = 300;
-          int height = popup.GetOffsetHeight(width) + 10;
+          int height = CalculatePopupHeight(popup, width);
 
-          if (height > maxheight)
-          {
-            height = maxheight;
-            popupDoc.body.style.overflow = "scroll";
-          }
-          else
-          {
-            popupDoc.body.style.overflow = "";
-          }
+          // Link Click events
+          popup.OnLinkClick += (sender, args) => PopupWindowLinkClick_OnEvent(sender, args, x, y, width, height, popup);
 
           popup.Show(x, y, width, height);
-
-          // Popup links
-          PopupAnchorElementClick = new HtmlEvent();
-          ((IHTMLElement2)popupDoc.body).SubscribeTo(EventType.onclick, PopupAnchorElementClick);
-          PopupAnchorElementClick.OnEvent += (sender, args) => PopupWindowLinkClick_OnEvent(sender, args, x, y, width, height, popup);
 
         }
         catch (RemotingException) { }
         catch (UnauthorizedAccessException) { }
+        catch (Exception ex)
+        {
+          LogTo.Error($"Exception {ex} while opening new popup window");
+        }
 
       }));
+
+    }
+
+    private int CalculatePopupHeight(HtmlPopup popup, int width)
+    {
+
+      if (popup.IsNull())
+        return -1;
+
+      var popupDoc = popup.GetDocument();
+
+      int maxheight = 500;
+      int height = popup.GetOffsetHeight(width) + 10;
+
+      if (height > maxheight)
+      {
+        height = maxheight;
+        popupDoc.body.style.overflow = "scroll";
+      }
+      else
+      {
+        popupDoc.body.style.overflow = "";
+      }
+
+      return height;
 
     }
 
@@ -672,7 +602,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     {
 
       var ev = obj.EventObj;
-
 
       var srcElement = ev.srcElement;
       if (srcElement.tagName.ToLowerInvariant() != "a")

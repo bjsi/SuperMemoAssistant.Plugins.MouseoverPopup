@@ -35,23 +35,23 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         if (htmlCtrls.IsNull() || !htmlCtrls.Any())
           return;
 
-      foreach (KeyValuePair<int, IControlHtml> kvpair in htmlCtrls)
-      {
+        foreach (KeyValuePair<int, IControlHtml> kvpair in htmlCtrls)
+        {
 
-        var htmlCtrl = kvpair.Value;
-        var htmlDoc = htmlCtrl?.GetDocument();
-        var text = htmlDoc?.body?.innerText
-          ?.Replace("\r\n", " ")
-          ?.ToLowerInvariant();
+          var htmlCtrl = kvpair.Value;
+          var htmlDoc = htmlCtrl?.GetDocument();
+          var text = htmlDoc?.body?.innerText
+            ?.Replace("\r\n", " ")
+            ?.ToLowerInvariant();
 
-        if (text.IsNullOrEmpty() || htmlDoc.IsNull())
-          continue;
+          if (text.IsNullOrEmpty() || htmlDoc.IsNull())
+            continue;
 
 
-        // Find matching keywords in the current htmlCtrl
-        var matches = keywords
-          ?.Search(text)
-          ?.Where(x => x.Word.Length > 2);
+          // Find matching keywords in the current htmlCtrl
+          var matches = keywords
+            ?.Search(text)
+            ?.Where(x => x.Word.Length > 2);
 
           // Don't add links to the references section of a component
           int referencesIdx = text.IndexOf("#supermemo reference:");
@@ -63,29 +63,29 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
           }
 
-        if (matches.IsNull() || !matches.Any())
-          continue;
-
-        // Order the keywords by index
-        var orderedMatches = matches
-          ?.OrderBy(x => x.Index)
-          ?.ThenByDescending(x => x.Word.Length);
-
-        var selObj = htmlDoc.selection?.createRange() as IHTMLTxtRange;
-        if (orderedMatches.IsNull() || !orderedMatches.Any() || selObj.IsNull())
-          continue;
-
-        // If the matched keyword is not already a link,
-        // wrap it in an anchor element with the first matching url
-
-        foreach (var match in orderedMatches)
-        {
-
-          string word = match.Word;
-          if (word.IsNullOrEmpty())
+          if (matches.IsNull() || !matches.Any())
             continue;
 
-          var replaceDuplicate = selObj.duplicate();
+          // Order the keywords by index
+          var orderedMatches = matches
+            ?.OrderBy(x => x.Index)
+            ?.ThenByDescending(x => x.Word.Length);
+
+          var selObj = htmlDoc.selection?.createRange() as IHTMLTxtRange;
+          if (orderedMatches.IsNull() || !orderedMatches.Any() || selObj.IsNull())
+            continue;
+
+          // If the matched keyword is not already a link,
+          // wrap it in an anchor element with the first matching url
+
+          foreach (var match in orderedMatches)
+          {
+
+            string word = match.Word;
+            if (word.IsNullOrEmpty())
+              continue;
+
+            var replaceDuplicate = selObj.duplicate();
 
             // mshtml is so buggy with newlines
             // need to check the htmlText if it begins / ends with <BR>
@@ -198,7 +198,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
       foreach (var provider in providers)
       {
-        
+
         var words = provider.Value.keywordScanningOptions.urlKeywordMap?.Keys;
         if (words.IsNull() || !words.Any())
           continue;
