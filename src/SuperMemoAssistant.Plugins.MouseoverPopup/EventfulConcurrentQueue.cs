@@ -10,6 +10,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 {
   public sealed class EventfulConcurrentQueue<T>
   {
+
     public readonly AutoResetEvent DataAvailableEvent = new AutoResetEvent(false);
 
     private ConcurrentQueue<T> _queue;

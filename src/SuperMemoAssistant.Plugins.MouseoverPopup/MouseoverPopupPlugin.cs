@@ -103,7 +103,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     // Used to run certain actions off of the UI thread
     // eg. item creation - otherwise will result in deadlock
-    private EventfulConcurrentQueue<Action> EventQueue = new EventfulConcurrentQueue<Action>();
+    private EventfulConcurrentQueue<Action> JobQueue = new EventfulConcurrentQueue<Action>();
 
     public MouseoverPopupCfg Config;
 
@@ -132,29 +132,29 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       Svc.SM.UI.ElementWdw.OnElementChanged += new ActionProxy<SMDisplayedElementChangedEventArgs>(OnElementChanged);
 
       // Start a new thread to handle events away from the UI thread.
-      _ = Task.Factory.StartNew(DispatchEvents, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+      _ = Task.Factory.StartNew(HandleJobs, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
 
     }
 
     /// <summary>
     /// Runs the actions added to the event queue away from the UI thread.
     /// </summary>
-    private void DispatchEvents()
+    private void HandleJobs()
     {
 
       while (!HasExited)
       {
-        EventQueue.DataAvailableEvent.WaitOne(3000);
-        while (EventQueue.TryDequeue(out var action))
+        JobQueue.DataAvailableEvent.WaitOne(3000);
+        while (JobQueue.TryDequeue(out var action))
         {
           try
           {
             action();
           }
           catch (RemotingException) { }
-          catch (Exception e) 
+          catch (Exception e)
           {
-            LogTo.Error($"Exception {e} caught in event dispatcher thread");
+            LogTo.Error($"Exception {e} caught in job queue thread");
           }
         }
       }
@@ -287,7 +287,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
       foreach (IHTMLElement2 link in links)
       {
-         link.SubscribeTo(EventType.onmouseenter, AnchorElementMouseEnter);
+        link.SubscribeTo(EventType.onmouseenter, AnchorElementMouseEnter);
       }
 
       AnchorElementMouseEnter.OnEvent += (sender, args) => AnchorElementMouseEnterEvent(sender, args, matchedProviders);
@@ -296,6 +296,8 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     private async void AnchorElementMouseEnterEvent(object sender, IControlHtmlEventArgs obj, Dictionary<string, ContentProvider> potentialProviders)
     {
+
+      // Get data from the IHTMLEventObj / IHTMLElements
 
       var ev = obj.EventObj;
       if (ev.IsNull())
@@ -311,50 +313,36 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       if (url.IsNullOrEmpty() || anchor.IsNull() || innerText.IsNullOrEmpty())
         return;
 
-      var matchedProviders = ProviderMatching.MatchProvidersAgainstMouseoverLink(url, innerText, potentialProviders);
-      if (matchedProviders.IsNull() || !matchedProviders.Any())
-        return;
-
-      var parentWdw = Application.Current.Dispatcher.Invoke(() => ContentUtils.GetFocusedHtmlWindow());
-      if (parentWdw.IsNull())
-        return;
-
-      var linkElement = anchor as IHTMLElement2;
-      if (linkElement.IsNull())
-        return;
-
-      // Add mouseleave event to cancel early
-      var remoteCancellationTokenSource = new RemoteCancellationTokenSource();
-      CancelTaskEarlyOnMouseLeave(linkElement, remoteCancellationTokenSource);
-
       try
       {
 
-        // Open a menu to choose a provider if multiple available
-        if (matchedProviders.Count > 1)
+        Action action = () =>
         {
 
-          Action action = () =>
-          {
+          var matchedProviders = ProviderMatching.MatchProvidersAgainstMouseoverLink(url, innerText, potentialProviders);
+          if (matchedProviders.IsNull() || !matchedProviders.Any())
+            return;
+
+          var parentWdw = Application.Current.Dispatcher.Invoke(() => ContentUtils.GetFocusedHtmlWindow());
+          if (parentWdw.IsNull())
+            return;
+
+          var linkElement = anchor as IHTMLElement2;
+          if (linkElement.IsNull())
+            return;
+
+          // Add mouseleave event to cancel early
+          var remoteCancellationTokenSource = new RemoteCancellationTokenSource();
+          CancelTaskEarlyOnMouseLeave(linkElement, remoteCancellationTokenSource);
+
+          if (matchedProviders.Count > 1)
             OpenChooseProviderMenu((IHTMLWindow4)parentWdw, url, innerText, matchedProviders, remoteCancellationTokenSource.Token, x, y);
-          };
-
-          EventQueue.Enqueue(action);
-
-        }
-
-        // Directly open a popup window
-        else
-        {
-
-          Action action = () =>
-          {
+          else
             OpenNewPopupWdw((IHTMLWindow4)parentWdw, url, innerText, matchedProviders.First().Value, remoteCancellationTokenSource.Token, x, y);
-          };
 
-          EventQueue.Enqueue(action);
+        };
 
-        }
+        JobQueue.Enqueue(action);
 
       }
       catch (RemotingException) { }
@@ -493,7 +481,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       var responseTime = DateTime.Now - start;
       if (responseTime.TotalMilliseconds < 400)
       {
-        await Task.Delay(TimeSpan.FromMilliseconds(400 - responseTime.TotalMilliseconds));
+        await Task.Delay(TimeSpan.FromMilliseconds(400 - responseTime.TotalMilliseconds)).ConfigureAwait(false);
       }
 
       if (ct.Token().IsCancellationRequested)
@@ -554,7 +542,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
           }
 
-          int width = 300;
+          int width = 400;
           int height = CalculatePopupHeight(popup, width);
 
           if (ct.Token().IsCancellationRequested)
@@ -617,11 +605,19 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     }
 
-    // TODO: Refactor
     private async void PopupWindowLinkClick_OnEvent(object sender, IControlHtmlEventArgs obj, HtmlPopupOptions opts, HtmlPopup popup)
     {
 
+      // Get data from event obj / IHTMLElements
+
       var ev = obj.EventObj;
+      if (ev.IsNull())
+        return;
+
+      bool ctrlPressed = ev.ctrlKey;
+
+      if (popup.IsNull() || opts.IsNull())
+        return;
 
       var srcElement = ev.srcElement;
       if (srcElement.tagName.ToLowerInvariant() != "a")
@@ -629,78 +625,70 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
       var linkElement = srcElement as IHTMLAnchorElement;
       string url = linkElement?.href;
-      if (url.IsNullOrEmpty())
+      if (url.IsNullOrEmpty() || linkElement.IsNull())
         return;
 
       string innerText = ((IHTMLElement)linkElement).innerText;
 
-      var matchedProviders = ProviderMatching.MatchProvidersAgainstMouseoverLink(url, innerText, providers);
-      if (matchedProviders.IsNull())
-        return;
-
-      bool ctrlPressed = ev.ctrlKey;
-      Action action = null;
-
-      if (ctrlPressed)
+      // Create a job to run on the job queue
+      Action action = () =>
       {
 
-        if (popup.IsNull())
+        var matchedProviders = ProviderMatching.MatchProvidersAgainstMouseoverLink(url, innerText, providers);
+        if (matchedProviders.IsNull())
           return;
 
-        // Open to the right of the current window
-        opts.x += opts.width;
-        var doc = popup.GetDocument();
-        var wdw = Application.Current.Dispatcher.Invoke(() => doc.parentWindow);
-
-        if (matchedProviders.Count == 1)
+        // Keep current window open, open new window to the right of the current window
+        if (ctrlPressed)
         {
 
-          action = () =>
-          {
+          opts.x += opts.width;
+          var doc = popup.GetDocument();
+          var wdw = Application.Current.Dispatcher.Invoke(() => doc.parentWindow);
 
+          if (matchedProviders.Count == 1)
             OpenNewPopupWdw((IHTMLWindow4)wdw, url, innerText, matchedProviders.First().Value, new RemoteCancellationToken(new CancellationToken()), opts.x, opts.y);
-          };
+          else
+            OpenChooseProviderMenu((IHTMLWindow4)wdw, url, innerText, matchedProviders, new RemoteCancellationToken(new CancellationToken()), opts.x, opts.y);
 
         }
+
+        // Replace the current window with a new window
         else
         {
-          action = () =>
+          var wdw = Application.Current.Dispatcher.Invoke(() => ContentUtils.GetFocusedHtmlWindow());
+
+          if (matchedProviders.Count == 1)
           {
-            OpenChooseProviderMenu((IHTMLWindow4)wdw, url, innerText, matchedProviders, new RemoteCancellationToken(new CancellationToken()), opts.x, opts.y);
-          };
 
-        }
-      }
-      else 
-      {
-        var wdw = Application.Current.Dispatcher.Invoke(() => ContentUtils.GetFocusedHtmlWindow());
+            action = () =>
+            {
+              OpenNewPopupWdw((IHTMLWindow4)wdw, url, innerText, matchedProviders.First().Value, new RemoteCancellationToken(new CancellationToken()), opts.x, opts.y);
+            };
 
-        if (matchedProviders.Count == 1)
-        {
-
-          action = () =>
+          }
+          else
           {
-            OpenNewPopupWdw((IHTMLWindow4)wdw, url, innerText, matchedProviders.First().Value, new RemoteCancellationToken(new CancellationToken()), opts.x, opts.y);
-          };
 
+            action = () =>
+            {
+              OpenChooseProviderMenu((IHTMLWindow4)wdw, url, innerText, matchedProviders, new RemoteCancellationToken(new CancellationToken()), opts.x, opts.y);
+            };
+
+          }
         }
-        else
-        {
+      };
 
-          action = () =>
-          {
-            OpenChooseProviderMenu((IHTMLWindow4)wdw, url, innerText, matchedProviders, new RemoteCancellationToken(new CancellationToken()), opts.x, opts.y);
-          };
-
-        }
-
-      }
-
-      EventQueue.Enqueue(action);
+      JobQueue.Enqueue(action);
 
     }
 
     private void GotoElementButtonClick_OnEvent(object sender, IControlHtmlEventArgs e, int elementId)
+    {
+      JobQueue.Enqueue(() => GotoElement(elementId));
+    }
+
+    private void GotoElement(int elementId)
     {
 
       if (elementId < 0)
@@ -709,84 +697,83 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       if (Svc.SM.Registry.Element[elementId].IsNull())
         return;
 
-      // Pass to the event queue to avoid deadlock issues
-      Action action = () =>
-      {
-        try
-        {
-
-          if (!Svc.SM.UI.ElementWdw.GoToElement(elementId))
-            LogTo.Warning($"Failed to GoToElement with id {elementId}");
-
-        }
-        catch (RemotingException) { }
-
-      };
-
-      EventQueue.Enqueue(action);
+      if (!Svc.SM.UI.ElementWdw.GoToElement(elementId))
+        LogTo.Warning($"Failed to GoToElement with id {elementId}");
 
     }
 
     private void PopupBrowserButtonClick_OnEvent(object sender, IControlHtmlEventArgs e, string query)
     {
+      JobQueue.Enqueue(() => OpenUrlInBrowser(query));
+    }
+
+    /// <summary>
+    /// Open in PopupWindow if available else default browser
+    /// </summary>
+    /// <param name="query"></param>
+    private void OpenUrlInBrowser(string query)
+    {
+
+      if (query.IsNullOrEmpty())
+        return;
 
       // Open inside popupWindow if available
       if (!_popupWindowSvc.IsNull())
-      {
-
-        Action action = () =>
-        {
-
-          try
-          {
-            _popupWindowSvc.Open(query, ContentType.Article);
-          }
-          catch (RemotingException) { }
-
-        };
-
-        EventQueue.Enqueue(action);
-      }
-
-      // Open in the user's default browser
+        OpenUrlInPopupWindow(query);
       else
-      {
-        try
-        {
-          Process.Start(query);
-        }
-        catch (Exception) { }
-      }
+        OpenUrlInUserDefaultBrowser(query);
 
+    }
+
+    private void OpenUrlInUserDefaultBrowser(string query)
+    {
+      try
+      {
+        Process.Start(query);
+      }
+      catch (Exception ex)
+      {
+        LogTo.Warning($"Exception {ex} thrown while attempting to open {query} in user's default browser");
+      }
+    }
+  
+
+    private void OpenUrlInPopupWindow(string query)
+    {
+      try
+      {
+        _popupWindowSvc.Open(query, ContentType.Article);
+      }
+      catch (RemotingException) { }
     }
 
     [LogToErrorOnException]
     private void ExtractButtonClick_OnEvent(object sender, IControlHtmlEventArgs e, PopupContent content, HtmlPopup popup)
     {
 
-      try
+      // Create an action to be passed to the event thread
+      // Running on the main UI thread causes deadlock
+
+      Action action = () =>
       {
 
-        ExtractType type = ExtractType.Full;
-        if (popup.IsNull() || content.IsNull())
-          return;
+        try
+        {
+          ExtractType type = ExtractType.Full;
+          if (popup.IsNull() || content.IsNull())
+            return;
 
-        var htmlDoc = popup.GetDocument();
-        if (htmlDoc.IsNull())
-          return;
-        
-        var sel = htmlDoc?.selection;
-        var selObj = sel?.createRange() as IHTMLTxtRange;
+          var htmlDoc = popup.GetDocument();
+          if (htmlDoc.IsNull())
+            return;
 
-        if (selObj.IsNull() || selObj.htmlText.IsNullOrEmpty())
-          type = ExtractType.Full;
-        else
-          type = ExtractType.Partial;
+          var sel = htmlDoc?.selection;
+          var selObj = sel?.createRange() as IHTMLTxtRange;
 
-        // Create an action to be passed to the event thread
-        // Running on the main UI thread causes deadlock
-
-        Action action = () => {
+          if (selObj.IsNull() || selObj.htmlText.IsNullOrEmpty())
+            type = ExtractType.Full;
+          else
+            type = ExtractType.Partial;
 
           // Extract the whole popup document
           if (type == ExtractType.Full)
@@ -796,13 +783,12 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
           else if (type == ExtractType.Partial)
             CreateSMExtract(selObj.htmlText, content.References, popup);
 
-        };
+        }
+        catch (UnauthorizedAccessException) { }
+        catch (COMException) { }
+      };
 
-        EventQueue.Enqueue(action);
-      }
-      catch (UnauthorizedAccessException) { }
-      catch (COMException) { }
-
+      JobQueue.Enqueue(action);
     }
 
     [LogToErrorOnException]
