@@ -171,7 +171,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         var regexes = provider.Value.urlRegexes;
 
         if (regexes.Any(r => new Regex(r).Match(url).Success)
-         || provider.Value.keywordScanningOptions.urlKeywordMap.Keys.Any(x => x == text)) // TODO: Should be lower?
+         || provider.Value.keywordScanningOptions.keywordMap.Keys.Any(x => x == text)) // TODO: Should be lower?
         {
           ret.Add(provider.Key, provider.Value);
         }

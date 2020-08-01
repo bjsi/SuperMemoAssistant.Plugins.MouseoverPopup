@@ -21,7 +21,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     private const int MAX_TEXT_LENGTH = 2000000000;
 
     /// <summary>
-    /// TODO: Find a way to skip element references
     /// Scan the current element for keywords.
     /// </summary>
     /// <param name="providers"></param>
@@ -162,7 +161,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
               string href = null;
               foreach (var provider in providers)
               {
-                if (provider.Value.keywordScanningOptions.urlKeywordMap.TryGetValue(word, out href))
+                if (provider.Value.keywordScanningOptions.keywordMap.TryGetValue(word, out href))
                   break;
               }
 
@@ -199,7 +198,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       foreach (var provider in providers)
       {
 
-        var words = provider.Value.keywordScanningOptions.urlKeywordMap?.Keys;
+        var words = provider.Value.keywordScanningOptions.keywordMap?.Keys;
         if (words.IsNull() || !words.Any())
           continue;
 

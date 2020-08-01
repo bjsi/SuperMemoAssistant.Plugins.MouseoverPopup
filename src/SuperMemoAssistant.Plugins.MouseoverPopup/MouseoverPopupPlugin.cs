@@ -420,7 +420,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
           foreach (var provider in providers)
           {
-            choices += $"<li><a href='{provider.Value.keywordScanningOptions.urlKeywordMap[text.ToLowerInvariant()]}'>{text} ({provider.Key})</li>";
+            choices += $"<li><a href='{provider.Value.keywordScanningOptions.keywordMap[text.ToLowerInvariant()]}'>{text} ({provider.Key})</li>";
           }
 
           string html = $@"
@@ -480,7 +480,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       }
       else
       {
-        if (providerInfo.keywordScanningOptions.urlKeywordMap.TryGetValue(innerText, out var href))
+        if (providerInfo.keywordScanningOptions.keywordMap.TryGetValue(innerText, out var href))
         {
           content = await provider.FetchHtml(ct, href);
         }
