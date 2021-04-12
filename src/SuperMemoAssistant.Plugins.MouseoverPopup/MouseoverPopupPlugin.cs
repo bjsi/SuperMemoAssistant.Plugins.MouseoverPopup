@@ -1,4 +1,30 @@
-﻿#region License & Metadata
+﻿using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Runtime.Remoting;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows;
+using Anotar.Serilog;
+using MouseoverPopupInterfaces;
+using mshtml;
+using SuperMemoAssistant.Interop.Plugins;
+using SuperMemoAssistant.Interop.SuperMemo.Content.Contents;
+using SuperMemoAssistant.Interop.SuperMemo.Core;
+using SuperMemoAssistant.Interop.SuperMemo.Elements.Builders;
+using SuperMemoAssistant.Interop.SuperMemo.Elements.Models;
+using SuperMemoAssistant.Plugins.MouseoverPopup.Models;
+using SuperMemoAssistant.Services;
+using SuperMemoAssistant.Services.IO.HotKeys;
+using SuperMemoAssistant.Services.UI.Configuration;
+using SuperMemoAssistant.Sys.Remoting;
+using static MouseoverPopupInterfaces.PopupContent;
+
+#region License & Metadata
 
 // The MIT License (MIT)
 // 
@@ -31,46 +57,15 @@
 
 namespace SuperMemoAssistant.Plugins.MouseoverPopup
 {
-  using System;
-  using System.Collections.Generic;
-  using System.Diagnostics;
-  using System.Diagnostics.CodeAnalysis;
-  using System.IO;
-  using System.Linq;
-  using System.Reflection;
-  using System.Runtime.InteropServices;
-  using System.Runtime.Remoting;
-  using System.Text.RegularExpressions;
-  using System.Threading;
-  using System.Threading.Tasks;
-  using System.Windows;
-  using Anotar.Serilog;
-  using Ganss.Text;
-  using global::MouseoverPopup.Interop;
-  using mshtml;
-  using SuperMemoAssistant.Extensions;
-  using SuperMemoAssistant.Interop.Plugins;
-  using SuperMemoAssistant.Interop.SuperMemo.Content.Contents;
-  using SuperMemoAssistant.Interop.SuperMemo.Content.Controls;
-  using SuperMemoAssistant.Interop.SuperMemo.Core;
-  using SuperMemoAssistant.Interop.SuperMemo.Elements.Builders;
-  using SuperMemoAssistant.Interop.SuperMemo.Elements.Models;
-  using SuperMemoAssistant.Interop.SuperMemo.Elements.Types;
-  using SuperMemoAssistant.Plugins.MouseoverPopup.Models;
-  using SuperMemoAssistant.Plugins.PopupWindow.Interop;
-  using SuperMemoAssistant.Services;
-  using SuperMemoAssistant.Services.Sentry;
-  using SuperMemoAssistant.Sys.Remoting;
-
   // ReSharper disable once UnusedMember.Global
   // ReSharper disable once ClassNeverInstantiated.Global
   [SuppressMessage("Microsoft.Naming", "CA1724:TypeNamesShouldNotMatchNamespaces")]
-  public class MouseoverPopupPlugin : SentrySMAPluginBase<MouseoverPopupPlugin>
+  public class MouseoverPopupPlugin : SMAPluginBase<MouseoverPopupPlugin>
   {
     #region Constructors
 
     /// <inheritdoc />
-    public MouseoverPopupPlugin() : base("Enter your Sentry.io api key (strongly recommended)") { }
+    public MouseoverPopupPlugin() { }
 
     #endregion
 
@@ -90,12 +85,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     /// <summary>
     /// Service that providers can call to register themselves.
     /// </summary>
-    private MouseoverService _mouseoverSvc = new MouseoverService();
-
-    /// <summary>
-    /// Service for communication between mouseover popup and popup window.
-    /// </summary>
-    private IPopupWindowSvc _popupWindowSvc { get; set; }
+    private MouseoverService MouseoverSvc { get; set; } = new MouseoverService();
 
     // HtmlDoc events
     private HtmlEvent AnchorElementMouseLeave { get; set; }
@@ -105,7 +95,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     // eg. item creation - otherwise will result in deadlock
     private EventfulConcurrentQueue<Action> JobQueue = new EventfulConcurrentQueue<Action>();
 
-    public MouseoverPopupCfg Config;
+    public MouseoverPopupCfg Config { get; private set; }
 
     // True after Dispose is called
     private bool HasExited = false;
@@ -114,22 +104,21 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     #region Methods Impl
 
-    private void LoadConfig()
+    private async Task LoadConfig()
     {
-      Config = Svc.Configuration.Load<MouseoverPopupCfg>() ?? new MouseoverPopupCfg();
+      Config = await Svc.Configuration.Load<MouseoverPopupCfg>().ConfigureAwait(false) ?? new MouseoverPopupCfg();
     }
 
     /// <inheritdoc />
     protected override void PluginInit()
     {
 
-      LoadConfig();
+      LoadConfig().Wait();
 
-      PublishService<IMouseoverSvc, MouseoverService>(_mouseoverSvc);
 
-      _popupWindowSvc = GetService<IPopupWindowSvc>();
+      PublishService<IMouseoverSvc, MouseoverService>(MouseoverSvc);
 
-      Svc.SM.UI.ElementWdw.OnElementChanged += new ActionProxy<SMDisplayedElementChangedEventArgs>(OnElementChanged);
+      Svc.SM.UI.ElementWdw.OnElementChanged += new ActionProxy<SMDisplayedElementChangedArgs>(OnElementChanged);
 
       // Start a new thread to handle events away from the UI thread.
       _ = Task.Factory.StartNew(HandleJobs, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
@@ -170,108 +159,38 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     /// <returns></returns>
     public bool RegisterProvider(string name, string[] urlRegexes, IMouseoverContentProvider provider)
     {
+      LogTo.Debug("Recieved call to RegisterProvider from: " + name);
 
       if (string.IsNullOrEmpty(name))
       {
-
         LogTo.Warning("Failed to RegisterProvider because provider name was null or empty.");
         return false;
-
       }
 
       if (provider.IsNull())
       {
-
         LogTo.Warning("Failed to RegisterProvider because provider was null.");
         return false;
-
       }
 
       if (providers.ContainsKey(name))
       {
-
         LogTo.Warning($"Failed to RegisterProvider because provider with name {name} already exists.");
         return false;
-
       }
 
       providers[name] = new ContentProvider(urlRegexes, provider);
       return true;
-
     }
 
     /// <summary>
-    /// Register a provider that DOES support keyword scanning.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="urlRegexes"></param>
-    /// <param name="keywordScanningOptions"></param>
-    /// <param name="provider"></param>
-    /// <returns></returns>
-    public bool RegisterProvider(string name, string[] urlRegexes, KeywordScanningOptions keywordScanningOptions, IMouseoverContentProvider provider)
+    public override void Dispose()
     {
-
-      if (string.IsNullOrEmpty(name))
-      {
-
-        LogTo.Warning("Failed to RegisterProvider because provider name was null or empty");
-        return false;
-
-      }
-
-      if (provider.IsNull())
-      {
-
-        LogTo.Warning("Failed to RegisterProvider because provider was null.");
-        return false;
-
-      }
-
-      if (providers.ContainsKey(name))
-      {
-
-        LogTo.Warning($"Failed to RegisterProvider because provider with name {name} already exists");
-        return false;
-
-      }
-
-      providers[name] = new ContentProvider(urlRegexes, keywordScanningOptions, provider);
-      return true;
-
-    }
-
-    protected override void Dispose(bool disposing)
-    {
-
       HasExited = true;
-      base.Dispose(disposing);
-
+      base.Dispose();
     }
 
-    private void OnElementChanged(SMDisplayedElementChangedEventArgs obj)
-    {
-
-      var matchingProviders = ProviderMatching.MatchProvidersAgainstCurrentElement(providers);
-      if (!matchingProviders.IsNull() && matchingProviders.Any())
-      {
-
-        // Create keyword trie
-        var searchKeywords = Keywords.CreateKeywords(matchingProviders);
-        if (searchKeywords.IsNull())
-          return;
-
-        // Adds links to matched keywords in the current element
-        Keywords.ScanAndAddLinks(matchingProviders, searchKeywords);
-
-      }
-
-      // Subscribe to mouseover and mouseleave events
-      // TODO: Pass all providers or just matching?
-      SubscribeToHtmlDocEvents(providers);
-
-    }
-
-    private void SubscribeToHtmlDocEvents(Dictionary<string, ContentProvider> matchedProviders)
+    private void OnElementChanged(SMDisplayedElementChangedArgs obj)
     {
 
       var htmlDoc = ContentUtils.GetFocusedHtmlDocument();
@@ -290,7 +209,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         link.SubscribeTo(EventType.onmouseenter, AnchorElementMouseEnter);
       }
 
-      AnchorElementMouseEnter.OnEvent += (sender, args) => AnchorElementMouseEnterEvent(sender, args, matchedProviders);
+      AnchorElementMouseEnter.OnEvent += (sender, args) => AnchorElementMouseEnterEvent(sender, args, providers);
 
     }
 
@@ -301,6 +220,10 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
       var ev = obj.EventObj;
       if (ev.IsNull())
+        return;
+
+      bool ctrlPressed = ev.ctrlKey;
+      if (Config.RequireCtrlKey && !ctrlPressed)
         return;
 
       // Coordinates
@@ -319,8 +242,9 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         Action action = () =>
         {
 
-          var matchedProviders = ProviderMatching.MatchProvidersAgainstMouseoverLink(url, innerText, potentialProviders);
-          if (matchedProviders.IsNull() || !matchedProviders.Any())
+          // TODO: There should only be one 
+          var matchedProvider = ProviderMatching.MatchProvidersAgainstMouseoverLink(url, innerText, potentialProviders);
+          if (matchedProvider.IsNull())
             return;
 
           var parentWdw = Application.Current.Dispatcher.Invoke(() => ContentUtils.GetFocusedHtmlWindow());
@@ -334,11 +258,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
           // Add mouseleave event to cancel early
           var remoteCancellationTokenSource = new RemoteCancellationTokenSource();
           CancelTaskEarlyOnMouseLeave(linkElement, remoteCancellationTokenSource);
-
-          if (matchedProviders.Count > 1)
-            OpenChooseProviderMenu((IHTMLWindow4)parentWdw, url, innerText, matchedProviders, remoteCancellationTokenSource.Token, x, y);
-          else
-            OpenNewPopupWdw((IHTMLWindow4)parentWdw, url, innerText, matchedProviders.First().Value, remoteCancellationTokenSource.Token, x, y);
+          OpenNewPopupWdw((IHTMLWindow4)parentWdw, url, innerText, matchedProvider, remoteCancellationTokenSource.Token, x, y);
 
         };
 
@@ -363,80 +283,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       AnchorElementMouseLeave = new HtmlEvent();
       element.SubscribeTo(EventType.onmouseleave, AnchorElementMouseLeave);
       AnchorElementMouseLeave.OnEvent += (sender, args) => remoteCancellationTokenSource?.Cancel();
-
-    }
-
-    /// <summary>
-    /// If multiple providers match, open a selection menu so the user can pick one.
-    /// </summary>
-    /// <returns></returns>
-    private async Task OpenChooseProviderMenu(IHTMLWindow4 parentWdw, string url, string text, Dictionary<string, ContentProvider> providers, RemoteCancellationToken ct, int x, int y)
-    {
-
-      if (url.IsNullOrEmpty() || text.IsNullOrEmpty())
-        return;
-
-      if (parentWdw.IsNull())
-        return;
-
-      if (providers.IsNull() || !providers.Any())
-        return;
-
-      // Create some delay
-      await Task.Delay(400);
-
-      if (ct.Token().IsCancellationRequested)
-        return;
-
-      await Application.Current.Dispatcher.BeginInvoke((Action)(() =>
-      {
-        try
-        {
-
-          var htmlDoc = ((IHTMLWindow2)parentWdw).document;
-          var htmlCtrlBody = htmlDoc.body;
-          if (htmlCtrlBody.IsNull())
-            return;
-
-          var popup = parentWdw.CreatePopup();
-          if (popup.IsNull())
-            return;
-
-          popup.OnShow += (sender, args) => _mouseoverSvc?.InvokeOnShow(sender, args);
-
-          string choices = string.Empty;
-
-          foreach (var provider in providers)
-          {
-            choices += $"<li><a href='{provider.Value.keywordScanningOptions.keywordMap[text.ToLowerInvariant()]}'>{text} ({provider.Key})</li>";
-          }
-
-          string html = $@"
-              <html>
-                <body>
-                  <h2>Options</h2>
-                  <ul>
-                    {choices}
-                  </ul>
-                </body>
-              </html>";
-
-          popup.AddContent(html);
-
-          int width = 400;
-          int height = CalculatePopupHeight(popup, width);
-
-          // Link Click events
-
-          var opts = new HtmlPopupOptions(x, y, width, height);
-          popup.OnLinkClick += (sender, args) => PopupWindowLinkClick_OnEvent(sender, args, opts, popup);
-          popup.Show(opts);
-
-        }
-        catch (UnauthorizedAccessException) { }
-        catch (COMException) { }
-
-      }));
 
     }
 
@@ -466,15 +312,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       {
         content = await provider.FetchHtml(ct, url);
       }
-      else
-      {
-        if (providerInfo.keywordScanningOptions.keywordMap.TryGetValue(innerText, out var href))
-        {
-          content = await provider.FetchHtml(ct, href);
-        }
-        else
-          return;
-      }
 
       // Add delay if necessary
 
@@ -503,7 +340,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
           if (popup.IsNull())
             return;
 
-          popup.OnShow += (sender, args) => _mouseoverSvc?.InvokeOnShow(sender, args);
           popup.AddContent(content.Html);
 
           // Extract Button
@@ -521,15 +357,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
             popup.AddGotoButton();
             popup.OnGotoButtonClick += (sender, args) => GotoElementButtonClick_OnEvent(sender, args, content.SMElementId);
-
-          }
-
-          // Edit Button
-          if (!content.EditUrl.IsNullOrEmpty())
-          {
-
-            popup.AddEditButton();
-            popup.OnEditButtonClick += (sender, args) => EditButtonClick_OnEvent(sender, args, content.EditUrl);
 
           }
 
@@ -591,20 +418,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     }
 
-    private void EditButtonClick_OnEvent(object sender, IControlHtmlEventArgs e, string url)
-    {
-
-      if (url.IsNullOrEmpty())
-        return;
-
-      try
-      {
-        Process.Start(url);
-      }
-      catch (Exception) { }
-
-    }
-
     private async void PopupWindowLinkClick_OnEvent(object sender, IControlHtmlEventArgs obj, HtmlPopupOptions opts, HtmlPopup popup)
     {
 
@@ -634,23 +447,18 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       Action action = () =>
       {
 
-        var matchedProviders = ProviderMatching.MatchProvidersAgainstMouseoverLink(url, innerText, providers);
-        if (matchedProviders.IsNull())
+        var matchedProvider = ProviderMatching.MatchProvidersAgainstMouseoverLink(url, innerText, providers);
+        if (matchedProvider.IsNull())
           return;
 
         // Keep current window open, open new window to the right of the current window
         if (ctrlPressed)
         {
-
           opts.x += opts.width;
           var doc = popup.GetDocument();
           var wdw = Application.Current.Dispatcher.Invoke(() => doc.parentWindow);
 
-          if (matchedProviders.Count == 1)
-            OpenNewPopupWdw((IHTMLWindow4)wdw, url, innerText, matchedProviders.First().Value, new RemoteCancellationToken(new CancellationToken()), opts.x, opts.y);
-          else
-            OpenChooseProviderMenu((IHTMLWindow4)wdw, url, innerText, matchedProviders, new RemoteCancellationToken(new CancellationToken()), opts.x, opts.y);
-
+          OpenNewPopupWdw((IHTMLWindow4)wdw, url, innerText, matchedProvider, new RemoteCancellationToken(new CancellationToken()), opts.x, opts.y);
         }
 
         // Replace the current window with a new window
@@ -658,24 +466,10 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         {
           var wdw = Application.Current.Dispatcher.Invoke(() => ContentUtils.GetFocusedHtmlWindow());
 
-          if (matchedProviders.Count == 1)
+          action = () =>
           {
-
-            action = () =>
-            {
-              OpenNewPopupWdw((IHTMLWindow4)wdw, url, innerText, matchedProviders.First().Value, new RemoteCancellationToken(new CancellationToken()), opts.x, opts.y);
-            };
-
-          }
-          else
-          {
-
-            action = () =>
-            {
-              OpenChooseProviderMenu((IHTMLWindow4)wdw, url, innerText, matchedProviders, new RemoteCancellationToken(new CancellationToken()), opts.x, opts.y);
-            };
-
-          }
+            OpenNewPopupWdw((IHTMLWindow4)wdw, url, innerText, matchedProvider, new RemoteCancellationToken(new CancellationToken()), opts.x, opts.y);
+          };
         }
       };
 
@@ -713,16 +507,10 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     /// <param name="query"></param>
     private void OpenUrlInBrowser(string query)
     {
-
       if (query.IsNullOrEmpty())
         return;
 
-      // Open inside popupWindow if available
-      if (!_popupWindowSvc.IsNull())
-        OpenUrlInPopupWindow(query);
-      else
-        OpenUrlInUserDefaultBrowser(query);
-
+      OpenUrlInUserDefaultBrowser(query);
     }
 
     private void OpenUrlInUserDefaultBrowser(string query)
@@ -737,15 +525,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       }
     }
   
-
-    private void OpenUrlInPopupWindow(string query)
-    {
-      try
-      {
-        _popupWindowSvc.Open(query, ContentType.Article);
-      }
-      catch (RemotingException) { }
-    }
 
     [LogToErrorOnException]
     private void ExtractButtonClick_OnEvent(object sender, IControlHtmlEventArgs e, PopupContent content, HtmlPopup popup)
@@ -844,6 +623,15 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       catch (RemotingException) { }
 
     }
+
+    // Set HasSettings to true, and uncomment this method to add your custom logic for settings
+    /// <inheritdoc />
+    public override void ShowSettings()
+    {
+      ConfigurationWindow.ShowAndActivate(HotKeyManager.Instance, Config);
+    }
+
+
 
 
     #endregion

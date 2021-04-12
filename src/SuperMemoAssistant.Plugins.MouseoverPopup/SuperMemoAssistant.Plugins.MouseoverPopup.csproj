@@ -31,7 +31,6 @@
     <Reference Include="WindowsFormsIntegration" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="AhoCorasick" Version="2.0.46" />
     <PackageReference Include="Anotar.Serilog.Fody">
       <Version>5.1.0</Version>
       <PrivateAssets>all</PrivateAssets>
@@ -60,34 +59,38 @@
     <PackageReference Include="Sentry.Serilog">
       <Version>2.1.1</Version>
     </PackageReference>
-    <PackageReference Include="SuperMemoAssistant.Interop">
-      <Version>2.0.5-alpha.6</Version>
-    </PackageReference>
-    <PackageReference Include="SuperMemoAssistant.Services.Sentry">
-      <Version>2.0.5-alpha.2</Version>
-    </PackageReference>
     <PackageReference Include="SuperMemoAssistant.Services.UI" Version="2.0.4.6" />
   </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\..\..\MouseoverPopup.Interop\MouseoverPopup.Interop.csproj" />
-    <ProjectReference Include="..\..\..\PopupWindow.Interop\src\SuperMemoAssistant.Plugins.PopupWindow.Interop\SuperMemoAssistant.Plugins.PopupWindow.Interop.csproj" />
-  </ItemGroup>
   <Target Name="CopyOutput" AfterTargets="Build">
-    <Exec Command="xcopy /h /i /c /k /e /r /y &quot;$(TargetDir)*&quot; &quot;%25UserProfile%25\SuperMemoAssistant\Plugins\Development\$(ProjectName)&quot;" />
+    <Exec Command="xcopy /h /i /c /k /e /r /y &quot;$(TargetDir)*&quot; &quot;%25UserProfile%25\Documents\SuperMemoAssistant\Plugins\Development\$(ProjectName)&quot;" />
   </Target>
   <ItemGroup>
-    <None Update="Images\SMExtract.png">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
+    <ProjectReference Include="..\..\..\MouseoverPopupInterfaces\MouseoverPopupInterfaces.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <None Update="Images\web.png">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
+    <None Remove="Images\Editor.png" />
   </ItemGroup>
   <ItemGroup>
-    <None Update="Images\Editor.png">
+    <Content Include="Images\Editor.png">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
+    </Content>
+    <Content Include="Images\GotoElement.jpg">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Images\SMExtract.png">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Images\web.png">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+  <ItemGroup>
+    <None Remove="Images\GotoElement.jpg" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Remove="Images\SMExtract.png" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Remove="Images\web.png" />
   </ItemGroup>
 </Project>

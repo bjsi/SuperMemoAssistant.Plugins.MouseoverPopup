@@ -1,14 +1,7 @@
-﻿using MouseoverPopup.Interop;
-using mshtml;
-using SuperMemoAssistant.Extensions;
+﻿using mshtml;
 using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Reflection;
-using System.Runtime.Remoting;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace SuperMemoAssistant.Plugins.MouseoverPopup
 {
@@ -36,8 +29,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
   {
 
     private IHTMLPopup _popup { get; set; }
-
-    public event EventHandler<HtmlPopupEventArgs> OnShow;
 
     // Link button click event
     public event EventHandler<IControlHtmlEventArgs> OnLinkClick;
@@ -106,7 +97,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
       SubscribeToLinkClickEvents();
       _popup.Show(opts.x, opts.y, opts.width, opts.height, null);
-      OnShow?.Invoke(this, new HtmlPopupEventArgs(opts.x, opts.y, opts.width, opts.height, _popup));
 
     }
 
@@ -131,41 +121,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       ((IHTMLDOMNode)htmlDoc.body).appendChild((IHTMLDOMNode)browserBtn);
 
       SubscribeToBrowserButtonClickEvents(((IHTMLElement2)browserBtn));
-    }
-
-    public void AddEditButton()
-    {
-
-      var htmlDoc = GetDocument();
-      if (htmlDoc.IsNull())
-        return;
-
-      var iconPath = Path.Combine(outPutDirectory, "Images\\Editor.png");
-      string icon_path = new Uri(iconPath).LocalPath;
-
-      var editBtn = htmlDoc.createElement("<button>");
-      editBtn.id = "edit-btn";
-
-      editBtn.innerHTML = $"<span><img src='{icon_path}' width='16px' height='16px' margin='5px'></span>";
-      editBtn.style.margin = "10px";
-
-      // Create open button
-      ((IHTMLDOMNode)htmlDoc.body).appendChild((IHTMLDOMNode)editBtn);
-
-      SubscribeToEditButtonClickEvent(((IHTMLElement2)editBtn));
-
-    }
-
-    private void SubscribeToEditButtonClickEvent(IHTMLElement2 btn)
-    {
-
-      if (btn.IsNull())
-        return;
-
-      _editButtonClickEvent = new HtmlEvent();
-      btn.SubscribeTo(EventType.onclick, _editButtonClickEvent);
-      _editButtonClickEvent.OnEvent += (sender, e) => OnBrowserButtonClick?.Invoke(sender, e);
-
     }
 
     public void AddGotoButton()
@@ -263,8 +218,11 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
       _browserButtonClickEvent = new HtmlEvent();
       btn.SubscribeTo(EventType.onclick, _browserButtonClickEvent);
-      _browserButtonClickEvent.OnEvent += (sender, e) => OnBrowserButtonClick?.Invoke(sender, e);
-
+      _browserButtonClickEvent.OnEvent += (sender, e) =>
+      {
+        OnBrowserButtonClick?.Invoke(sender, e);
+        _popup.Hide();
+      };
     }
 
     public int GetOffsetHeight(int width)

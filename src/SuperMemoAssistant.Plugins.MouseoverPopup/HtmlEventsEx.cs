@@ -1,12 +1,8 @@
 ﻿using mshtml;
 using SuperMemoAssistant.Extensions;
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Runtime.InteropServices;
 using System.Runtime.Remoting;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace SuperMemoAssistant.Plugins.MouseoverPopup
 {
