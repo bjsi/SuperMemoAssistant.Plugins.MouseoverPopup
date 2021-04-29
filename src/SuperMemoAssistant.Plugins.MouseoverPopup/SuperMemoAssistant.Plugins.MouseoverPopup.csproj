@@ -72,4 +72,30 @@
   <Target Name="CopyOutput" AfterTargets="Build">
     <Exec Command="xcopy /h /i /c /k /e /r /y &quot;$(TargetDir)*&quot; &quot;%25UserProfile%25\SuperMemoAssistant\Plugins\Development\$(ProjectName)&quot;" />
   </Target>
+  <ItemGroup>
+    <None Remove="Images\Editor.png" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="Images\Editor.png">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Images\GotoElement.jpg">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Images\SMExtract.png">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Images\web.png">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+  <ItemGroup>
+    <None Remove="Images\GotoElement.jpg" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Remove="Images\SMExtract.png" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Remove="Images\web.png" />
+  </ItemGroup>
 </Project>
