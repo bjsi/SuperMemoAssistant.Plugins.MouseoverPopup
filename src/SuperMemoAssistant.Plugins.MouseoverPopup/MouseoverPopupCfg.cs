@@ -54,9 +54,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     [Field(Name = "Require ctrl key to be pressed to open links?")]
     public bool RequireCtrlKey { get; set; } = false;
 
-
-    [Field]
-
     [JsonIgnore]
     public bool IsChanged { get; set; }
 

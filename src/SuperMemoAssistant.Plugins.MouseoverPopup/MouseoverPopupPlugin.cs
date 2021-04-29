@@ -1,4 +1,17 @@
-﻿using System;
+﻿using Anotar.Serilog;
+using MouseoverPopupInterfaces;
+using mshtml;
+using SuperMemoAssistant.Interop.SuperMemo.Content.Contents;
+using SuperMemoAssistant.Interop.SuperMemo.Core;
+using SuperMemoAssistant.Interop.SuperMemo.Elements.Builders;
+using SuperMemoAssistant.Interop.SuperMemo.Elements.Models;
+using SuperMemoAssistant.Plugins.MouseoverPopup.Models;
+using SuperMemoAssistant.Services;
+using SuperMemoAssistant.Services.IO.HotKeys;
+using SuperMemoAssistant.Services.Sentry;
+using SuperMemoAssistant.Services.UI.Configuration;
+using SuperMemoAssistant.Sys.Remoting;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
@@ -9,20 +22,6 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
-using Anotar.Serilog;
-using MouseoverPopupInterfaces;
-using mshtml;
-using SuperMemoAssistant.Interop.Plugins;
-using SuperMemoAssistant.Interop.SuperMemo.Content.Contents;
-using SuperMemoAssistant.Interop.SuperMemo.Core;
-using SuperMemoAssistant.Interop.SuperMemo.Elements.Builders;
-using SuperMemoAssistant.Interop.SuperMemo.Elements.Models;
-using SuperMemoAssistant.Plugins.MouseoverPopup.Models;
-using SuperMemoAssistant.Services;
-using SuperMemoAssistant.Services.IO.HotKeys;
-using SuperMemoAssistant.Services.UI.Configuration;
-using SuperMemoAssistant.Sys.Remoting;
-using static MouseoverPopupInterfaces.PopupContent;
 
 #region License & Metadata
 
@@ -47,7 +46,7 @@ using static MouseoverPopupInterfaces.PopupContent;
 // DEALINGS IN THE SOFTWARE.
 // 
 // 
-// Created On:   7/5/2020 10:47:16 PM
+// Created On:   4/29/2021 5:43:15 PM
 // Modified By:  james
 
 #endregion
@@ -60,14 +59,17 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
   // ReSharper disable once UnusedMember.Global
   // ReSharper disable once ClassNeverInstantiated.Global
   [SuppressMessage("Microsoft.Naming", "CA1724:TypeNamesShouldNotMatchNamespaces")]
-  public class MouseoverPopupPlugin : SMAPluginBase<MouseoverPopupPlugin>
+  public class MouseoverPopupPlugin : SentrySMAPluginBase<MouseoverPopupPlugin>
   {
     #region Constructors
 
     /// <inheritdoc />
-    public MouseoverPopupPlugin() { }
+    public MouseoverPopupPlugin() : base("Enter your Sentry.io api key (strongly recommended)") { }
 
     #endregion
+
+
+
 
     #region Properties Impl - Public
 
@@ -102,28 +104,40 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     #endregion
 
+
+
+
     #region Methods Impl
 
-    private async Task LoadConfig()
+    private void LoadConfig()
     {
-      Config = await Svc.Configuration.Load<MouseoverPopupCfg>().ConfigureAwait(false) ?? new MouseoverPopupCfg();
+      Config = Svc.Configuration.Load<MouseoverPopupCfg>() ?? new MouseoverPopupCfg();
     }
 
+
+
     /// <inheritdoc />
-    protected override void PluginInit()
+    protected override void OnSMStarted(bool wasSMAlreadyStarted)
     {
-
-      LoadConfig().Wait();
-
+      LoadConfig();
 
       PublishService<IMouseoverSvc, MouseoverService>(MouseoverSvc);
 
-      Svc.SM.UI.ElementWdw.OnElementChanged += new ActionProxy<SMDisplayedElementChangedArgs>(OnElementChanged);
+      Svc.SM.UI.ElementWdw.OnElementChanged += new ActionProxy<SMDisplayedElementChangedEventArgs>(OnElementChanged);
 
       // Start a new thread to handle events away from the UI thread.
       _ = Task.Factory.StartNew(HandleJobs, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
 
+      base.OnSMStarted(wasSMAlreadyStarted);
     }
+
+    #endregion
+
+
+    #region Methods
+
+
+    // TODO: Dispose.
 
     /// <summary>
     /// Runs the actions added to the event queue away from the UI thread.
@@ -183,14 +197,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       return true;
     }
 
-    /// <summary>
-    public override void Dispose()
-    {
-      HasExited = true;
-      base.Dispose();
-    }
-
-    private void OnElementChanged(SMDisplayedElementChangedArgs obj)
+    private void OnElementChanged(SMDisplayedElementChangedEventArgs obj)
     {
 
       var htmlDoc = ContentUtils.GetFocusedHtmlDocument();
@@ -242,7 +249,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         Action action = () =>
         {
 
-          // TODO: There should only be one 
           var matchedProvider = ProviderMatching.MatchProvidersAgainstMouseoverLink(url, innerText, potentialProviders);
           if (matchedProvider.IsNull())
             return;
@@ -352,13 +358,13 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
           }
 
           // SM Element Goto Button
-          if (content.SMElementId > -1)
-          {
+          //if (content.SMElementId > -1)
+          //{
 
-            popup.AddGotoButton();
-            popup.OnGotoButtonClick += (sender, args) => GotoElementButtonClick_OnEvent(sender, args, content.SMElementId);
+          //  popup.AddGotoButton();
+          //  popup.OnGotoButtonClick += (sender, args) => GotoElementButtonClick_OnEvent(sender, args, content.SMElementId);
 
-          }
+          //}
 
           // Browser Button
           if (!content.BrowserQuery.IsNullOrEmpty())
@@ -524,7 +530,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         LogTo.Warning($"Exception {ex} thrown while attempting to open {query} in user's default browser");
       }
     }
-  
+
 
     [LogToErrorOnException]
     private void ExtractButtonClick_OnEvent(object sender, IControlHtmlEventArgs e, PopupContent content, HtmlPopup popup)
@@ -595,7 +601,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
         bool ret = Svc.SM.Registry.Element.Add(
           out var value,
-          ElemCreationFlags.ForceCreate,
+          ElemCreationFlags.None,
           new ElementBuilder(ElementType.Topic, contents.ToArray())
             .WithParent(currentElement)
             .WithLayout("Article")
@@ -628,10 +634,8 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     /// <inheritdoc />
     public override void ShowSettings()
     {
-      ConfigurationWindow.ShowAndActivate(HotKeyManager.Instance, Config);
+      ConfigurationWindow.ShowAndActivate("MouseoverPopup", HotKeyManager.Instance, Config);
     }
-
-
 
 
     #endregion
@@ -639,4 +643,5 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     #region Methods
     #endregion
   }
+
 }

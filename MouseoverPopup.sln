@@ -1,17 +1,13 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 16
-VisualStudioVersion = 16.0.29905.134
+VisualStudioVersion = 16.0.31205.134
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "_Solution files", "_Solution files", "{ABDB2BD8-88B0-466A-8F6F-988940B13CE7}"
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "_Solution files", "_Solution files", "{E947CE02-945C-4D76-B046-068146126149}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Plugins", "Plugins", "{4D4C73CA-61D1-4E12-92E2-11435E39A631}"
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Plugins", "Plugins", "{C150CDC2-B9C1-413D-8EAE-49DE187DF730}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SuperMemoAssistant.Plugins.MouseoverPopup", "src\SuperMemoAssistant.Plugins.MouseoverPopup\SuperMemoAssistant.Plugins.MouseoverPopup.csproj", "{0C5F0EDF-360A-41E3-BCAA-63CEB08B30D5}"
-EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Tests", "Tests", "{B7FB84DA-427B-45FF-AD0B-BB96411D015C}"
-EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SuperMemoAssistant.Plugins.MouseoverPopup.Tests", "src\SuperMemoAssistant.Plugins.MouseoverPopup.Tests\SuperMemoAssistant.Plugins.MouseoverPopup.Tests.csproj", "{0FA3C57F-28E9-4B18-88A0-710701BC97E6}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SuperMemoAssistant.Plugins.MouseoverPopup", "src\SuperMemoAssistant.Plugins.MouseoverPopup\SuperMemoAssistant.Plugins.MouseoverPopup.csproj", "{ED190E7C-C3F3-4262-804A-D4C1C693D64A}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MouseoverPopupInterfaces", "..\MouseoverPopupInterfaces\MouseoverPopupInterfaces.csproj", "{9E31C6FE-1D51-4EB9-B5E4-6749D5134695}"
 EndProject
@@ -24,26 +20,16 @@ Global
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{0C5F0EDF-360A-41E3-BCAA-63CEB08B30D5}.1. Alpha (Debug)|Any CPU.ActiveCfg = Debug|Any CPU
-		{0C5F0EDF-360A-41E3-BCAA-63CEB08B30D5}.1. Alpha (Debug)|Any CPU.Build.0 = Debug|Any CPU
-		{0C5F0EDF-360A-41E3-BCAA-63CEB08B30D5}.2. Beta (Release)|Any CPU.ActiveCfg = Release|Any CPU
-		{0C5F0EDF-360A-41E3-BCAA-63CEB08B30D5}.2. Beta (Release)|Any CPU.Build.0 = Release|Any CPU
-		{0C5F0EDF-360A-41E3-BCAA-63CEB08B30D5}.3. Stable (Release)|Any CPU.ActiveCfg = Release|Any CPU
-		{0C5F0EDF-360A-41E3-BCAA-63CEB08B30D5}.3. Stable (Release)|Any CPU.Build.0 = Release|Any CPU
-		{0C5F0EDF-360A-41E3-BCAA-63CEB08B30D5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{0C5F0EDF-360A-41E3-BCAA-63CEB08B30D5}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{0C5F0EDF-360A-41E3-BCAA-63CEB08B30D5}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{0C5F0EDF-360A-41E3-BCAA-63CEB08B30D5}.Release|Any CPU.Build.0 = Release|Any CPU
-		{0FA3C57F-28E9-4B18-88A0-710701BC97E6}.1. Alpha (Debug)|Any CPU.ActiveCfg = Debug|Any CPU
-		{0FA3C57F-28E9-4B18-88A0-710701BC97E6}.1. Alpha (Debug)|Any CPU.Build.0 = Debug|Any CPU
-		{0FA3C57F-28E9-4B18-88A0-710701BC97E6}.2. Beta (Release)|Any CPU.ActiveCfg = Release|Any CPU
-		{0FA3C57F-28E9-4B18-88A0-710701BC97E6}.2. Beta (Release)|Any CPU.Build.0 = Release|Any CPU
-		{0FA3C57F-28E9-4B18-88A0-710701BC97E6}.3. Stable (Release)|Any CPU.ActiveCfg = Release|Any CPU
-		{0FA3C57F-28E9-4B18-88A0-710701BC97E6}.3. Stable (Release)|Any CPU.Build.0 = Release|Any CPU
-		{0FA3C57F-28E9-4B18-88A0-710701BC97E6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{0FA3C57F-28E9-4B18-88A0-710701BC97E6}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{0FA3C57F-28E9-4B18-88A0-710701BC97E6}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{0FA3C57F-28E9-4B18-88A0-710701BC97E6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{ED190E7C-C3F3-4262-804A-D4C1C693D64A}.1. Alpha (Debug)|Any CPU.ActiveCfg = Debug|Any CPU
+		{ED190E7C-C3F3-4262-804A-D4C1C693D64A}.1. Alpha (Debug)|Any CPU.Build.0 = Debug|Any CPU
+		{ED190E7C-C3F3-4262-804A-D4C1C693D64A}.2. Beta (Release)|Any CPU.ActiveCfg = Release|Any CPU
+		{ED190E7C-C3F3-4262-804A-D4C1C693D64A}.2. Beta (Release)|Any CPU.Build.0 = Release|Any CPU
+		{ED190E7C-C3F3-4262-804A-D4C1C693D64A}.3. Stable (Release)|Any CPU.ActiveCfg = Release|Any CPU
+		{ED190E7C-C3F3-4262-804A-D4C1C693D64A}.3. Stable (Release)|Any CPU.Build.0 = Release|Any CPU
+		{ED190E7C-C3F3-4262-804A-D4C1C693D64A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{ED190E7C-C3F3-4262-804A-D4C1C693D64A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{ED190E7C-C3F3-4262-804A-D4C1C693D64A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{ED190E7C-C3F3-4262-804A-D4C1C693D64A}.Release|Any CPU.Build.0 = Release|Any CPU
 		{9E31C6FE-1D51-4EB9-B5E4-6749D5134695}.1. Alpha (Debug)|Any CPU.ActiveCfg = Debug|Any CPU
 		{9E31C6FE-1D51-4EB9-B5E4-6749D5134695}.1. Alpha (Debug)|Any CPU.Build.0 = Debug|Any CPU
 		{9E31C6FE-1D51-4EB9-B5E4-6749D5134695}.2. Beta (Release)|Any CPU.ActiveCfg = Release|Any CPU
@@ -59,10 +45,9 @@ Global
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
-		{0C5F0EDF-360A-41E3-BCAA-63CEB08B30D5} = {4D4C73CA-61D1-4E12-92E2-11435E39A631}
-		{0FA3C57F-28E9-4B18-88A0-710701BC97E6} = {B7FB84DA-427B-45FF-AD0B-BB96411D015C}
+		{ED190E7C-C3F3-4262-804A-D4C1C693D64A} = {C150CDC2-B9C1-413D-8EAE-49DE187DF730}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
-		SolutionGuid = {3323DA3C-5399-4C3A-A607-96E58FC5FB07}
+		SolutionGuid = {8E575B1E-9DD8-48A8-9B6C-7736F470258B}
 	EndGlobalSection
 EndGlobal
