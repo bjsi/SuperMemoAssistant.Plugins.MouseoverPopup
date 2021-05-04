@@ -4,6 +4,7 @@ using SuperMemoAssistant.Interop.SuperMemo.Content.Controls;
 using SuperMemoAssistant.Services;
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 
 namespace SuperMemoAssistant.Plugins.MouseoverPopup
 {
@@ -70,13 +71,13 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     }
 
-    public static Dictionary<int, IControlHtml> GetHtmlCtrls()
+    public static List<IControlHtml> GetHtmlCtrls()
     {
 
       try
       {
 
-        var ret = new Dictionary<int, IControlHtml>();
+        var ret = new List<IControlHtml>();
 
         var ctrlGroup = Svc.SM.UI.ElementWdw.ControlGroup;
         if (ctrlGroup.IsNull())
@@ -87,13 +88,14 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
           var htmlCtrl = ctrlGroup[i].AsHtml();
           if (htmlCtrl.IsNull())
             continue;
-          ret.Add(i, htmlCtrl);
+          ret.Add(htmlCtrl);
         }
 
         return ret;
 
       }
       catch (UnauthorizedAccessException) { }
+      catch (COMException) { }
 
       return null;
 

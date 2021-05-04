@@ -1,6 +1,7 @@
 ﻿using Anotar.Serilog;
 using MouseoverPopupInterfaces;
 using mshtml;
+using SuperMemoAssistant.Extensions;
 using SuperMemoAssistant.Interop.SuperMemo.Content.Contents;
 using SuperMemoAssistant.Interop.SuperMemo.Core;
 using SuperMemoAssistant.Interop.SuperMemo.Elements.Builders;
@@ -16,6 +17,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Reactive.Concurrency;
+using System.Reactive.Linq;
 using System.Runtime.InteropServices;
 using System.Runtime.Remoting;
 using System.Text.RegularExpressions;
@@ -78,34 +81,27 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     /// <inheritdoc />
     public override bool HasSettings => true;
+    public MouseoverPopupCfg Config { get; private set; }
 
-    /// <summary>
-    /// Stores the content providers whose services are requesed on mouseover events.
-    /// </summary>
     private Dictionary<string, ContentProvider> providers { get; set; } = new Dictionary<string, ContentProvider>();
-
-    /// <summary>
-    /// Service that providers can call to register themselves.
-    /// </summary>
     private MouseoverService MouseoverSvc { get; set; } = new MouseoverService();
+    private HtmlPopup CurrentPopup { get; set; }
 
     // HtmlDoc events
     private HtmlEvent AnchorElementMouseLeave { get; set; }
     private HtmlEvent AnchorElementMouseEnter { get; set; }
 
+    private RemoteCancellationTokenSource CurrentCancellationTokenSource { get; set; }
+    private CancellationToken CurrentToken { get; set; }
+
     // Used to run certain actions off of the UI thread
     // eg. item creation - otherwise will result in deadlock
     private EventfulConcurrentQueue<Action> JobQueue = new EventfulConcurrentQueue<Action>();
-
-    public MouseoverPopupCfg Config { get; private set; }
 
     // True after Dispose is called
     private bool HasExited = false;
 
     #endregion
-
-
-
 
     #region Methods Impl
 
@@ -113,8 +109,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     {
       Config = Svc.Configuration.Load<MouseoverPopupCfg>() ?? new MouseoverPopupCfg();
     }
-
-
 
     /// <inheritdoc />
     protected override void OnSMStarted(bool wasSMAlreadyStarted)
@@ -136,8 +130,13 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     #region Methods
 
+    protected override void Dispose(bool disposing)
+    {
+      if (disposing)
+        HasExited = true;
 
-    // TODO: Dispose.
+      base.Dispose(disposing);
+    }
 
     /// <summary>
     /// Runs the actions added to the event queue away from the UI thread.
@@ -194,21 +193,62 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       }
 
       providers[name] = new ContentProvider(urlRegexes, provider);
+      LogTo.Debug("Successfully Registered: " + name);
       return true;
     }
 
     private void OnElementChanged(SMDisplayedElementChangedEventArgs obj)
     {
 
-      var htmlDoc = ContentUtils.GetFocusedHtmlDocument();
-      if (htmlDoc.IsNull())
+      AnchorElementMouseEnter = new HtmlEvent();
+      AnchorElementMouseLeave = new HtmlEvent();
+
+      var ctrls = ContentUtils.GetHtmlCtrls();
+      if (ctrls == null || !ctrls.Any())
         return;
 
-      AnchorElementMouseEnter = new HtmlEvent();
+      foreach (var ctrl in ctrls)
+      {
+        var doc = ctrl?.GetDocument();
+        SubscribeToAnchorElementMouseEnterEvents(doc);
+        SubscribeToAnchorElementMouseLeaveEvents(doc);
+      }
+    }
 
-      // Add mouseenter events to links
-      var links = htmlDoc.links;
-      if (links.IsNull())
+    private void SubscribeToAnchorElementMouseLeaveEvents(IHTMLDocument2 doc)
+    {
+      if (doc == null)
+        return;
+
+      var links = doc.links;
+      if (links == null)
+        return;
+
+      foreach (IHTMLElement2 link in links)
+      {
+        link.SubscribeTo(EventType.onmouseleave, AnchorElementMouseLeave);
+      }
+
+
+      Observable.FromEventPattern<IControlHtmlEventArgs>(
+        h => AnchorElementMouseLeave.OnEvent += h,
+        h => AnchorElementMouseLeave.OnEvent -= h
+        )
+        .SubscribeOn(TaskPoolScheduler.Default)
+        .Subscribe(x => 
+        {
+          LogTo.Debug("Cancelling from mouse leave");
+          CurrentCancellationTokenSource?.Cancel();
+        });
+    }
+
+    private void SubscribeToAnchorElementMouseEnterEvents(IHTMLDocument2 doc)
+    {
+      if (doc == null)
+        return;
+
+      var links = doc.links;
+      if (links == null)
         return;
 
       foreach (IHTMLElement2 link in links)
@@ -216,80 +256,52 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         link.SubscribeTo(EventType.onmouseenter, AnchorElementMouseEnter);
       }
 
-      AnchorElementMouseEnter.OnEvent += (sender, args) => AnchorElementMouseEnterEvent(sender, args, providers);
-
+      Observable.FromEventPattern<IControlHtmlEventArgs>(
+        h => AnchorElementMouseEnter.OnEvent += h,
+        h => AnchorElementMouseEnter.OnEvent -= h
+        )
+        .Select(x => new HtmlMouseoverInfo(x.EventArgs.EventObj)) // get args
+        .Do(_ =>
+        {
+          CurrentCancellationTokenSource?.Cancel();
+          CurrentCancellationTokenSource = new RemoteCancellationTokenSource();
+          CurrentToken = CurrentCancellationTokenSource.Token.Token();
+          LogTo.Debug("Cancelled from reactive chain");
+        })
+        .Throttle(TimeSpan.FromSeconds(0.5))
+        .SubscribeOn(TaskPoolScheduler.Default)
+        .Subscribe(x => MouseEnterEventHandler(x));
     }
 
-    private async void AnchorElementMouseEnterEvent(object sender, IControlHtmlEventArgs obj, Dictionary<string, ContentProvider> potentialProviders)
+    private void MouseEnterEventHandler(HtmlMouseoverInfo info)
     {
-
-      // Get data from the IHTMLEventObj / IHTMLElements
-
-      var ev = obj.EventObj;
-      if (ev.IsNull())
-        return;
-
-      bool ctrlPressed = ev.ctrlKey;
-      if (Config.RequireCtrlKey && !ctrlPressed)
-        return;
-
-      // Coordinates
-      var x = ev.screenX;
-      var y = ev.screenY;
-
-      var anchor = obj.EventObj.srcElement as IHTMLAnchorElement;
-      string url = anchor?.href;
-      string innerText = ((IHTMLElement)anchor)?.innerText;
-      if (url.IsNullOrEmpty() || anchor.IsNull() || innerText.IsNullOrEmpty())
-        return;
 
       try
       {
+        CurrentToken.ThrowIfCancellationRequested();
+        CurrentCancellationTokenSource = new RemoteCancellationTokenSource();
+        CurrentToken = CurrentCancellationTokenSource.Token.Token();
+        if (Config.RequireCtrlKey && !info.ctrlKey)
+          return;
 
-        Action action = () =>
-        {
+        
+        if (info.url.IsNullOrEmpty() || info.innerText.IsNullOrEmpty())
+          return;
 
-          var matchedProvider = ProviderMatching.MatchProvidersAgainstMouseoverLink(url, innerText, potentialProviders);
-          if (matchedProvider.IsNull())
-            return;
+        var matchedProvider = ProviderMatching.MatchProvidersAgainstMouseoverLink(info.url, info.innerText, providers);
+        if (matchedProvider.IsNull())
+          return;
 
-          var parentWdw = Application.Current.Dispatcher.Invoke(() => ContentUtils.GetFocusedHtmlWindow());
-          if (parentWdw.IsNull())
-            return;
+        var parentWdw = Application.Current.Dispatcher.Invoke(() => ContentUtils.GetFocusedHtmlWindow());
+        if (parentWdw.IsNull())
+          return;
 
-          var linkElement = anchor as IHTMLElement2;
-          if (linkElement.IsNull())
-            return;
-
-          // Add mouseleave event to cancel early
-          var remoteCancellationTokenSource = new RemoteCancellationTokenSource();
-          CancelTaskEarlyOnMouseLeave(linkElement, remoteCancellationTokenSource);
-          OpenNewPopupWdw((IHTMLWindow4)parentWdw, url, innerText, matchedProvider, remoteCancellationTokenSource.Token, x, y);
-
-        };
-
-        JobQueue.Enqueue(action);
+        CurrentToken.ThrowIfCancellationRequested();
+        OpenNewPopupWdw((IHTMLWindow4)parentWdw, info.url, info.innerText, matchedProvider, CurrentCancellationTokenSource.Token, info.x, info.y);
 
       }
+      catch (OperationCanceledException) { }
       catch (RemotingException) { }
-
-    }
-
-    /// <summary>
-    /// Cancel the oustanding Task on mouseleave.
-    /// </summary>
-    /// <param name="element"></param>
-    /// <param name="remoteCancellationTokenSource"></param>
-    private void CancelTaskEarlyOnMouseLeave(IHTMLElement2 element, RemoteCancellationTokenSource remoteCancellationTokenSource)
-    {
-
-      if (element.IsNull())
-        return;
-
-      AnchorElementMouseLeave = new HtmlEvent();
-      element.SubscribeTo(EventType.onmouseleave, AnchorElementMouseLeave);
-      AnchorElementMouseLeave.OnEvent += (sender, args) => remoteCancellationTokenSource?.Cancel();
-
     }
 
     /// <summary>
@@ -298,105 +310,69 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     /// <returns></returns>
     private async Task OpenNewPopupWdw(IHTMLWindow4 parentWdw, string url, string innerText, ContentProvider providerInfo, RemoteCancellationToken ct, int x, int y)
     {
-
-      if (url.IsNullOrEmpty() || parentWdw.IsNull() || innerText.IsNullOrEmpty())
+      var token = ct;
+      if (CurrentToken.IsCancellationRequested)
         return;
-
-      if (providerInfo.IsNull() || providerInfo.provider.IsNull())
-        return;
-
-      var provider = providerInfo.provider;
-
-      // Check whether url or keywords matched and fetch the corresponding content
-      // Time the response and add some delay if necessary.
-      // This prevents many popups opening when you move the mouse over many links
-      // It also makes the interval between mouseover and popup opening more consistent
-
-      var start = DateTime.Now;
-      PopupContent content = null;
-      if (providerInfo.urlRegexes.Any(r => new Regex(r).Match(url).Success))
+      try
       {
-        content = await provider.FetchHtml(ct, url);
-      }
+        if (providerInfo.IsNull() || providerInfo.provider.IsNull())
+          return;
 
-      // Add delay if necessary
+        var provider = providerInfo.provider;
 
-      var responseTime = DateTime.Now - start;
-      if (responseTime.TotalMilliseconds < 400)
-      {
-        await Task.Delay(TimeSpan.FromMilliseconds(400 - responseTime.TotalMilliseconds)).ConfigureAwait(false);
-      }
-
-      if (ct.Token().IsCancellationRequested)
-        return;
-
-      if (content.IsNull() || content.Html.IsNullOrEmpty())
-        return;
-
-      await Application.Current.Dispatcher.BeginInvoke((Action)(() =>
-      {
-        try
+        PopupContent content = null;
+        if (providerInfo.urlRegexes.Any(r => new Regex(r).Match(url).Success))
         {
+          content = await provider.FetchHtml(ct, url);
+        }
 
+        if (content.IsNull() || content.Html.IsNullOrEmpty())
+          return;
+
+        await Application.Current.Dispatcher.BeginInvoke((Action)(() =>
+        {
           var htmlDoc = ((IHTMLWindow2)parentWdw).document;
           if (htmlDoc.IsNull())
             return;
 
-          var popup = parentWdw.CreatePopup();
-          if (popup.IsNull())
+          CurrentPopup = parentWdw.CreatePopup();
+          if (CurrentPopup.IsNull())
             return;
 
-          popup.AddContent(content.Html);
+          CurrentPopup.AddContent(content.Html);
 
           // Extract Button
           if (content.AllowExtract)
           {
-
-            popup.AddExtractButton();
-            popup.OnExtractButtonClick += (sender, args) => ExtractButtonClick_OnEvent(sender, args, content, popup);
-
+            CurrentPopup.AddExtractButton();
+            CurrentPopup.OnExtractButtonClick += (sender, args) => ExtractButtonClick_OnEvent(sender, args, content, CurrentPopup);
           }
-
-          // SM Element Goto Button
-          //if (content.SMElementId > -1)
-          //{
-
-          //  popup.AddGotoButton();
-          //  popup.OnGotoButtonClick += (sender, args) => GotoElementButtonClick_OnEvent(sender, args, content.SMElementId);
-
-          //}
 
           // Browser Button
           if (!content.BrowserQuery.IsNullOrEmpty())
           {
-
-            popup.AddBrowserButton();
-            popup.OnBrowserButtonClick += (sender, args) => PopupBrowserButtonClick_OnEvent(sender, args, content.BrowserQuery);
-
+            CurrentPopup.AddBrowserButton();
+            CurrentPopup.OnBrowserButtonClick += (sender, args) => PopupBrowserButtonClick_OnEvent(sender, args, content.BrowserQuery);
           }
 
           int width = 400;
-          int height = CalculatePopupHeight(popup, width);
-
-          if (ct.Token().IsCancellationRequested)
-            return;
-
-          // Link Click events
+          int height = CalculatePopupHeight(CurrentPopup, width);
 
           var opts = new HtmlPopupOptions(x, y, width, height);
-          popup.OnLinkClick += (sender, args) => PopupWindowLinkClick_OnEvent(sender, args, opts, popup);
-          popup.Show(opts);
+          CurrentPopup.OnLinkClick += (sender, args) => PopupWindowLinkClick_OnEvent(sender, args, opts, CurrentPopup);
+          if (CurrentToken.IsCancellationRequested)
+            return;
+          CurrentPopup.Show(opts);
 
-        }
-        catch (RemotingException) { }
-        catch (UnauthorizedAccessException) { }
-        catch (Exception ex)
-        {
-          LogTo.Error($"Exception {ex} while opening new popup window");
-        }
-
-      }));
-
+        }));
+      }
+      catch (RemotingException) { }
+      catch (UnauthorizedAccessException) { }
+      catch (OperationCanceledException) { }
+      catch (Exception ex)
+      {
+        LogTo.Error($"Exception {ex} while opening new popup window");
+      }
     }
 
     private int CalculatePopupHeight(HtmlPopup popup, int width)
@@ -480,25 +456,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       };
 
       JobQueue.Enqueue(action);
-
-    }
-
-    private void GotoElementButtonClick_OnEvent(object sender, IControlHtmlEventArgs e, int elementId)
-    {
-      JobQueue.Enqueue(() => GotoElement(elementId));
-    }
-
-    private void GotoElement(int elementId)
-    {
-
-      if (elementId < 0)
-        return;
-
-      if (Svc.SM.Registry.Element[elementId].IsNull())
-        return;
-
-      if (!Svc.SM.UI.ElementWdw.GoToElement(elementId))
-        LogTo.Warning($"Failed to GoToElement with id {elementId}");
 
     }
 
@@ -636,7 +593,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     {
       ConfigurationWindow.ShowAndActivate("MouseoverPopup", HotKeyManager.Instance, Config);
     }
-
 
     #endregion
 
