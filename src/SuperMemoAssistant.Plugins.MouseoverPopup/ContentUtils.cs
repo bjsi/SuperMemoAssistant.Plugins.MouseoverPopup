@@ -1,4 +1,5 @@
-﻿using mshtml;
+﻿using Anotar.Serilog;
+using mshtml;
 using SuperMemoAssistant.Extensions;
 using SuperMemoAssistant.Interop.SuperMemo.Content.Controls;
 using SuperMemoAssistant.Services;
@@ -15,20 +16,25 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     /// Get the IHTMLWindow2 object for the currently focused HtmlControl
     /// </summary>
     /// <returns>IHTMLWindow2 object or null</returns>
-    public static IHTMLWindow2 GetFocusedHtmlWindow()
+    public static IHTMLWindow4 GetFocusedHtmlWindow()
     {
 
       try
       {
+        LogTo.Debug("Before ctrlGroup");
         var ctrlGroup = Svc.SM.UI.ElementWdw.ControlGroup;
+        LogTo.Debug("After ctrlGroup");
         var htmlCtrl = ctrlGroup?.FocusedControl?.AsHtml();
+        LogTo.Debug("After htmlCtrl");
         var htmlDoc = htmlCtrl?.GetDocument();
+        LogTo.Debug("After htmlDoc");
         if (htmlDoc == null)
           return null;
 
-        return htmlDoc.parentWindow;
+        return htmlDoc.parentWindow as IHTMLWindow4;
       }
       catch (UnauthorizedAccessException) { }
+      catch (COMException) { }
 
       return null;
 

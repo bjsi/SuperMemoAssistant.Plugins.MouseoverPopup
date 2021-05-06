@@ -313,6 +313,10 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
       var token = ct;
       if (CurrentToken.IsCancellationRequested)
         return;
+
+      if (parentWdw == null)
+        return;
+
       try
       {
         if (providerInfo.IsNull() || providerInfo.provider.IsNull())
@@ -439,6 +443,8 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
           opts.x += opts.width;
           var doc = popup.GetDocument();
           var wdw = Application.Current.Dispatcher.Invoke(() => doc.parentWindow);
+          if (wdw == null)
+            return;
 
           OpenNewPopupWdw((IHTMLWindow4)wdw, url, innerText, matchedProvider, new RemoteCancellationToken(new CancellationToken()), opts.x, opts.y);
         }
@@ -447,10 +453,12 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         else
         {
           var wdw = Application.Current.Dispatcher.Invoke(() => ContentUtils.GetFocusedHtmlWindow());
+          if (wdw == null)
+            return;
 
           action = () =>
           {
-            OpenNewPopupWdw((IHTMLWindow4)wdw, url, innerText, matchedProvider, new RemoteCancellationToken(new CancellationToken()), opts.x, opts.y);
+            OpenNewPopupWdw(wdw, url, innerText, matchedProvider, new RemoteCancellationToken(new CancellationToken()), opts.x, opts.y);
           };
         }
       };
