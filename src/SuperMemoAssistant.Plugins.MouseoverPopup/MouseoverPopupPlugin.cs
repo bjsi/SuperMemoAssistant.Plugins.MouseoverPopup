@@ -189,7 +189,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
       if (providers.ContainsKey(name))
       {
-        LogTo.Warning($"Failed to RegisterProvider because provider with name {name} already exists.");
         return false;
       }
 
