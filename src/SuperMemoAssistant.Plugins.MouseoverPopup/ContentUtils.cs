@@ -18,26 +18,17 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     /// <returns>IHTMLWindow2 object or null</returns>
     public static IHTMLWindow4 GetFocusedHtmlWindow()
     {
-
       try
       {
-        LogTo.Debug("Before ctrlGroup");
         var ctrlGroup = Svc.SM.UI.ElementWdw.ControlGroup;
-        LogTo.Debug("After ctrlGroup");
         var htmlCtrl = ctrlGroup?.FocusedControl?.AsHtml();
-        LogTo.Debug("After htmlCtrl");
         var htmlDoc = htmlCtrl?.GetDocument();
-        LogTo.Debug("After htmlDoc");
-        if (htmlDoc == null)
-          return null;
-
-        return htmlDoc.parentWindow as IHTMLWindow4;
+        return htmlDoc?.parentWindow as IHTMLWindow4;
       }
       catch (UnauthorizedAccessException) { }
       catch (COMException) { }
 
       return null;
-
     }
 
     /// <summary>

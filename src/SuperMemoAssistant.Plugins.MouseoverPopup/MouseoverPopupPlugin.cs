@@ -24,6 +24,7 @@ using System.Runtime.Remoting;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Threading.Tasks.Schedulers;
 using System.Windows;
 
 #region License & Metadata
@@ -275,7 +276,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     private void MouseEnterEventHandler(HtmlMouseoverInfo info)
     {
-
       try
       {
         CurrentToken.ThrowIfCancellationRequested();
@@ -284,7 +284,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         if (Config.RequireCtrlKey && !info.ctrlKey)
           return;
 
-        
+
         if (info.url.IsNullOrEmpty() || info.innerText.IsNullOrEmpty())
           return;
 
@@ -292,13 +292,12 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         if (matchedProvider.IsNull())
           return;
 
-        var parentWdw = Application.Current.Dispatcher.Invoke(() => ContentUtils.GetFocusedHtmlWindow());
-        if (parentWdw.IsNull())
-          return;
-
         CurrentToken.ThrowIfCancellationRequested();
-        OpenNewPopupWdw((IHTMLWindow4)parentWdw, info.url, info.innerText, matchedProvider, CurrentCancellationTokenSource.Token, info.x, info.y);
-
+        Application.Current.Dispatcher.BeginInvoke((Action)(async () => 
+        {
+          var parentWdw = ContentUtils.GetFocusedHtmlWindow();
+          await OpenNewPopupWdw(parentWdw, info.url, info.innerText, matchedProvider, CurrentCancellationTokenSource.Token, info.x, info.y);
+        }));
       }
       catch (OperationCanceledException) { }
       catch (RemotingException) { }
@@ -307,7 +306,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
     /// <summary>
     /// Open a new popup mouseover popup.
     /// </summary>
-    /// <returns></returns>
+    /// <reupurns></returns>
     private async Task OpenNewPopupWdw(IHTMLWindow4 parentWdw, string url, string innerText, ContentProvider providerInfo, RemoteCancellationToken ct, int x, int y)
     {
       var token = ct;
@@ -333,9 +332,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         if (content.IsNull() || content.Html.IsNullOrEmpty())
           return;
 
-        await Application.Current.Dispatcher.BeginInvoke((Action)(() =>
-        {
-          var htmlDoc = ((IHTMLWindow2)parentWdw).document;
+          var htmlDoc = (parentWdw as IHTMLWindow2)?.document;
           if (htmlDoc.IsNull())
             return;
 
@@ -367,8 +364,6 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
           if (CurrentToken.IsCancellationRequested)
             return;
           CurrentPopup.Show(opts);
-
-        }));
       }
       catch (RemotingException) { }
       catch (UnauthorizedAccessException) { }
@@ -404,7 +399,7 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
 
     }
 
-    private async void PopupWindowLinkClick_OnEvent(object sender, IControlHtmlEventArgs obj, HtmlPopupOptions opts, HtmlPopup popup)
+    private void PopupWindowLinkClick_OnEvent(object sender, IControlHtmlEventArgs obj, HtmlPopupOptions opts, HtmlPopup popup)
     {
 
       // Get data from event obj / IHTMLElements
@@ -441,24 +436,24 @@ namespace SuperMemoAssistant.Plugins.MouseoverPopup
         if (ctrlPressed)
         {
           opts.x += opts.width;
-          var doc = popup.GetDocument();
-          var wdw = Application.Current.Dispatcher.Invoke(() => doc.parentWindow);
-          if (wdw == null)
-            return;
-
-          OpenNewPopupWdw((IHTMLWindow4)wdw, url, innerText, matchedProvider, new RemoteCancellationToken(new CancellationToken()), opts.x, opts.y);
+          Application.Current.Dispatcher.BeginInvoke((Action)(async () =>
+          {
+            var doc = popup.GetDocument();
+            var wdw = doc.parentWindow;
+            await OpenNewPopupWdw(wdw as IHTMLWindow4, url, innerText, matchedProvider, new RemoteCancellationToken(new CancellationToken()), opts.x, opts.y);
+          }));
         }
 
         // Replace the current window with a new window
         else
         {
-          var wdw = Application.Current.Dispatcher.Invoke(() => ContentUtils.GetFocusedHtmlWindow());
-          if (wdw == null)
-            return;
-
           action = () =>
           {
-            OpenNewPopupWdw(wdw, url, innerText, matchedProvider, new RemoteCancellationToken(new CancellationToken()), opts.x, opts.y);
+            Application.Current.Dispatcher.BeginInvoke((Action)(async () =>
+            {
+              var wdw = ContentUtils.GetFocusedHtmlWindow();
+              await OpenNewPopupWdw(wdw, url, innerText, matchedProvider, new RemoteCancellationToken(new CancellationToken()), opts.x, opts.y);
+            }));
           };
         }
       };

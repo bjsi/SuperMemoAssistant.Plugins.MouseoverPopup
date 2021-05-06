@@ -48,6 +48,7 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
+    <PackageReference Include="ParallelExtensionsExtras" Version="1.2.0" />
     <PackageReference Include="PluginManager.Interop">
       <Version>0.2.1.51</Version>
     </PackageReference>
